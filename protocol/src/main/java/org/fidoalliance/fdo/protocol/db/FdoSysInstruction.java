@@ -25,7 +25,7 @@ public class FdoSysInstruction {
   private String resource;
 
   @JsonProperty("fetch")
-  private String fetch;
+  private String[] fetchArgs;
 
   @JsonIgnore
   public Map<String, String> getFilter() {
@@ -52,7 +52,7 @@ public class FdoSysInstruction {
     return resource;
   }
 
-  public String getFetch() {
-    return fetch;
+  public String[] getFetchArgs() {
+    return fetchArgs;
   }
 }

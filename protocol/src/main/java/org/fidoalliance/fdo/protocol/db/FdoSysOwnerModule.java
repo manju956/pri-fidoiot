@@ -3,12 +3,24 @@
 
 package org.fidoalliance.fdo.protocol.db;
 
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileSystemException;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 import java.sql.Blob;
 import java.sql.SQLException;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
+
 import org.apache.http.HttpEntity;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpGet;
@@ -41,6 +53,7 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
 
 
   private LoggerService logger = new LoggerService(FdoSysOwnerModule.class);
+  private Map<String, byte[]> SVI_MAP = new HashMap<>();
 
   @Override
   public String getName() {
@@ -55,6 +68,7 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
   @Override
   public void receive(ServiceInfoModuleState state, ServiceInfoKeyValuePair kvPair)
       throws IOException {
+    logger.info("in receive()::FdoSysOwnerModule...... \n\n\n");
     FdoSysModuleExtra extra = state.getExtra().covertValue(FdoSysModuleExtra.class);
     switch (kvPair.getKey()) {
       case DevMod.KEY_MODULES: {
@@ -101,13 +115,17 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
           }
         }
         break;
-      case FdoSys.DATA:
+      case FdoSys.DATA: {
+        logger.info("\nFDO SYS message is DATA\n\n");
         if (state.isActive()) {
           byte[] data = Mapper.INSTANCE.readValue(kvPair.getValue(), byte[].class);
-          onFetch(state, extra, data);
+          String sviMapKey = kvPair.getSviMapKey();
+          onFetch(state, extra, data, sviMapKey);
         }
-        break;
+      }
+      break;
       case FdoSys.EOT:
+        logger.info("\nFDO SYS message is EOT\n");
         if (state.isActive()) {
           extra.setWaiting(false);
           extra.setQueue(extra.getWaitQueue());
@@ -178,12 +196,31 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
       StatusCb status) throws IOException {
     logger.info("status_cb completed " + status.isCompleted() + " retcode "
         + status.getRetCode() + " timeout " + status.getTimeout());
+    logger.info("output of cmd execution on owner: " + status.getExecResult());
   }
 
   protected void onFetch(ServiceInfoModuleState state, FdoSysModuleExtra extra,
-      byte[] data) throws IOException {
-
+      byte[] data, String sviMapKey) throws IOException {
     logger.warn(new String(data, StandardCharsets.US_ASCII));
+    if (SVI_MAP.containsKey(sviMapKey)) {
+      logger.warn(new String(SVI_MAP.get(sviMapKey), StandardCharsets.US_ASCII) + "\n");
+    }
+    // store the result of fetch in map
+    SVI_MAP.put(sviMapKey, data);
+
+    // Persist the data fetched from device to file
+    try {
+      Set<StandardOpenOption> options = new HashSet<>();
+      options.add(StandardOpenOption.CREATE);
+      options.add(StandardOpenOption.WRITE);
+      try (FileChannel channel = FileChannel.open(Paths.get("fetch_data.txt"), options)) {
+        logger.info("writing to file channel..");
+        channel.write(ByteBuffer.wrap(data));
+      }
+    } catch (IOException ex) {
+      logger.error("IOException while saving fetch data..");
+      throw new InternalServerErrorException(ex);
+    }
   }
 
   protected void onEot(ServiceInfoModuleState state, FdoSysModuleExtra extra, EotResult result)
@@ -225,7 +262,7 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
             getExec(state, extra, instruction);
           } else if (instruction.getExecCbArgs() != null) {
             getExecCb(state, extra, instruction);
-          } else if (instruction.getFetch() != null) {
+          } else if (instruction.getFetchArgs() != null) {
             getFetch(state, extra, instruction);
           }
         }
@@ -262,7 +299,7 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
       FdoSysInstruction instruction) throws IOException {
     ServiceInfoKeyValuePair kv = new ServiceInfoKeyValuePair();
     kv.setKeyName(FdoSys.FETCH);
-    kv.setValue(Mapper.INSTANCE.writeValue(instruction.getFetch()));
+    kv.setValue(Mapper.INSTANCE.writeValue(instruction.getFetchArgs()));
     extra.getQueue().add(kv);
   }
 

@@ -36,6 +36,8 @@ import org.fidoalliance.fdo.protocol.message.ServiceInfoQueue;
 import org.fidoalliance.fdo.protocol.message.StatusCb;
 import org.fidoalliance.fdo.protocol.serviceinfo.FdoSys;
 
+import static org.bouncycastle.oer.its.CertificateId.none;
+
 
 public class FdoSysDeviceModule implements ServiceInfoModule {
 
@@ -49,7 +51,7 @@ public class FdoSysDeviceModule implements ServiceInfoModule {
   private Path currentFile;
   private Process execProcess;
   private int statusTimeout = DEFAULT_STATUS_TIMEOUT;
-
+  private String execResult;
 
   private ServiceInfoQueue queue = new ServiceInfoQueue();
 
@@ -66,6 +68,7 @@ public class FdoSysDeviceModule implements ServiceInfoModule {
   @Override
   public void receive(ServiceInfoModuleState state, ServiceInfoKeyValuePair kvPair)
       throws IOException {
+    logger.info("inside receive: device sys module\n\n");
     switch (kvPair.getKey()) {
       case FdoSys.ACTIVE:
         logger.info(FdoSys.ACTIVE + " = "
@@ -112,8 +115,14 @@ public class FdoSysDeviceModule implements ServiceInfoModule {
         break;
       case FdoSys.FETCH:
         if (state.isActive()) {
-          String fetchFileName = Mapper.INSTANCE.readValue(kvPair.getValue(), String.class);
-          fetch(fetchFileName, state.getMtu());
+          logger.info("inside fetch::\n");
+          //String fetchFileName = Mapper.INSTANCE.readValue(kvPair.getValue(), String[].class);
+          String[] fetchArgs = Mapper.INSTANCE.readValue(kvPair.getValue(), String[].class);
+          String fetchFileName = fetchArgs[0];
+          String sviKey = fetchArgs[1];
+          //String sviKey = kvPair.getSviMapKey();
+          System.out.println("svikey: " + sviKey);
+          fetch(fetchFileName, sviKey, state.getMtu());
         } else {
           logger.warn("fdo_sys module not active. Ignoring fdo_sys:fetch.");
         }
@@ -251,9 +260,10 @@ public class FdoSysDeviceModule implements ServiceInfoModule {
       builder.redirectErrorStream(true);
       builder.redirectOutput(getExecOutputRedirect());
       execProcess = builder.start();
+      execResult = new String(execProcess.getInputStream().readAllBytes());
       statusTimeout = DEFAULT_STATUS_TIMEOUT;
       //set the first status check
-      createStatus(false, 0, statusTimeout);
+      createStatus(false, 0, statusTimeout, execResult);
     } catch (IOException e) {
       throw new RuntimeException(e);
     }
@@ -264,7 +274,7 @@ public class FdoSysDeviceModule implements ServiceInfoModule {
     //check if finished
     if (execProcess != null) {
       if (!execProcess.isAlive()) {
-        createStatus(true, execProcess.exitValue(), statusTimeout);
+        createStatus(true, execProcess.exitValue(), statusTimeout, execResult);
         execProcess = null;
         return;
       }
@@ -277,11 +287,11 @@ public class FdoSysDeviceModule implements ServiceInfoModule {
       } catch (InterruptedException e) {
         logger.warn("timer interrupted");
       }
-      createStatus(false, 0, statusTimeout);
+      createStatus(false, 0, statusTimeout, execResult);
     }
   }
 
-  private void createStatus(boolean completed, int retCode, int timeout) throws IOException {
+  private void createStatus(boolean completed, int retCode, int timeout, String execResult) throws IOException {
 
     ServiceInfoKeyValuePair kv = new ServiceInfoKeyValuePair();
     kv.setKeyName(FdoSys.STATUS_CB);
@@ -290,12 +300,13 @@ public class FdoSysDeviceModule implements ServiceInfoModule {
     status.setCompleted(completed);
     status.setRetCode(retCode);
     status.setTimeout(timeout);
+    status.setExecResult(execResult);
     kv.setValue(Mapper.INSTANCE.writeValue(status));
     queue.add(kv);
 
   }
 
-  private void fetch(String fetchFileName, int mtu) throws IOException {
+  private void fetch(String fetchFileName, String sysKey, int mtu) throws IOException {
     EotResult result = new EotResult();
     result.setResult(0);
     try (FileInputStream in = new FileInputStream(fetchFileName)) {
@@ -315,6 +326,7 @@ public class FdoSysDeviceModule implements ServiceInfoModule {
         }
         ServiceInfoKeyValuePair kv = new ServiceInfoKeyValuePair();
         kv.setKeyName(FdoSys.DATA);
+        kv.setSviMapKey(sysKey);
         kv.setValue(Mapper.INSTANCE.writeValue(data));
         queue.add(kv);
       }
