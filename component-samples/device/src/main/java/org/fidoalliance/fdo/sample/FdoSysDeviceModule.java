@@ -8,6 +8,7 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystems;
 import java.nio.file.OpenOption;
 import java.nio.file.Path;
@@ -16,14 +17,14 @@ import java.nio.file.attribute.FileAttribute;
 import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Predicate;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import netscape.javascript.JSObject;
 import org.fidoalliance.fdo.protocol.InternalServerErrorException;
 import org.fidoalliance.fdo.protocol.LoggerService;
 import org.fidoalliance.fdo.protocol.Mapper;
@@ -52,6 +53,7 @@ public class FdoSysDeviceModule implements ServiceInfoModule {
   private Process execProcess;
   private int statusTimeout = DEFAULT_STATUS_TIMEOUT;
   private String execResult;
+  private String mapKey;
 
   private ServiceInfoQueue queue = new ServiceInfoQueue();
 
@@ -68,7 +70,7 @@ public class FdoSysDeviceModule implements ServiceInfoModule {
   @Override
   public void receive(ServiceInfoModuleState state, ServiceInfoKeyValuePair kvPair)
       throws IOException {
-    logger.info("inside receive: device sys module\n\n");
+    logger.warn("inside receive: device sys module\n\n");
     switch (kvPair.getKey()) {
       case FdoSys.ACTIVE:
         logger.info(FdoSys.ACTIVE + " = "
@@ -115,7 +117,6 @@ public class FdoSysDeviceModule implements ServiceInfoModule {
         break;
       case FdoSys.FETCH:
         if (state.isActive()) {
-          logger.info("inside fetch::\n");
           //String fetchFileName = Mapper.INSTANCE.readValue(kvPair.getValue(), String[].class);
           String[] fetchArgs = Mapper.INSTANCE.readValue(kvPair.getValue(), String[].class);
           String fetchFileName = fetchArgs[0];
@@ -255,17 +256,26 @@ public class FdoSysDeviceModule implements ServiceInfoModule {
       argList.add(args[i]);
     }
 
+    // extract last argument which contains key(s) of exec_cb response
+    mapKey = argList.get(argList.size()-1);
     try {
       ProcessBuilder builder = new ProcessBuilder(argList);
       builder.redirectErrorStream(true);
       builder.redirectOutput(getExecOutputRedirect());
       execProcess = builder.start();
-      execResult = new String(execProcess.getInputStream().readAllBytes());
+      String proc_out = new String(execProcess.getInputStream().readAllBytes()).replace("\n", "");
       statusTimeout = DEFAULT_STATUS_TIMEOUT;
+
+      // construct JSON response having execution result
+      ObjectMapper mapper = new ObjectMapper();
+      ObjectNode response = mapper.createObjectNode();
+      response.put(mapKey, proc_out);
+      execResult = new String(mapper.writeValueAsBytes(response), StandardCharsets.US_ASCII);
+
       //set the first status check
-      createStatus(false, 0, statusTimeout, execResult);
-    } catch (IOException e) {
-      throw new RuntimeException(e);
+      createStatus(false, 0, statusTimeout, execResult, mapKey);
+    } catch (Exception e) {
+      throw e;
     }
   }
 
@@ -274,7 +284,7 @@ public class FdoSysDeviceModule implements ServiceInfoModule {
     //check if finished
     if (execProcess != null) {
       if (!execProcess.isAlive()) {
-        createStatus(true, execProcess.exitValue(), statusTimeout, execResult);
+        createStatus(true, execProcess.exitValue(), statusTimeout, execResult, mapKey);
         execProcess = null;
         return;
       }
@@ -287,11 +297,11 @@ public class FdoSysDeviceModule implements ServiceInfoModule {
       } catch (InterruptedException e) {
         logger.warn("timer interrupted");
       }
-      createStatus(false, 0, statusTimeout, execResult);
+      createStatus(false, 0, statusTimeout, execResult, mapKey);
     }
   }
 
-  private void createStatus(boolean completed, int retCode, int timeout, String execResult) throws IOException {
+  private void createStatus(boolean completed, int retCode, int timeout, String execResult, String mapKey) throws IOException {
 
     ServiceInfoKeyValuePair kv = new ServiceInfoKeyValuePair();
     kv.setKeyName(FdoSys.STATUS_CB);
@@ -302,8 +312,8 @@ public class FdoSysDeviceModule implements ServiceInfoModule {
     status.setTimeout(timeout);
     status.setExecResult(execResult);
     kv.setValue(Mapper.INSTANCE.writeValue(status));
+    kv.setSviMapKey(mapKey);
     queue.add(kv);
-
   }
 
   private void fetch(String fetchFileName, String sysKey, int mtu) throws IOException {

@@ -21,6 +21,8 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.http.HttpEntity;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpGet;
@@ -43,6 +45,7 @@ import org.fidoalliance.fdo.protocol.message.ServiceInfoQueue;
 import org.fidoalliance.fdo.protocol.message.StatusCb;
 import org.fidoalliance.fdo.protocol.serviceinfo.DevMod;
 import org.fidoalliance.fdo.protocol.serviceinfo.FdoSys;
+import org.h2.util.json.JSONString;
 import org.hibernate.Session;
 import org.hibernate.Transaction;
 
@@ -97,13 +100,14 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
       case FdoSys.STATUS_CB:
         if (state.isActive()) {
           StatusCb status = Mapper.INSTANCE.readValue(kvPair.getValue(), StatusCb.class);
+          String mapKey = kvPair.getSviMapKey();
 
           //send notification of status
           ServiceInfoKeyValuePair kv = new ServiceInfoKeyValuePair();
           kv.setKeyName(FdoSys.STATUS_CB);
           kv.setValue(Mapper.INSTANCE.writeValue(status));
           extra.getQueue().add(kv);
-          onStatusCb(state, extra, status);
+          onStatusCb(state, extra, status, mapKey);
           if (status.isCompleted()) {
             // check for error
             if (status.getRetCode() != 0) {
@@ -193,10 +197,20 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
   }
 
   protected void onStatusCb(ServiceInfoModuleState state, FdoSysModuleExtra extra,
-      StatusCb status) throws IOException {
+      StatusCb status, String mapKey) throws IOException {
     logger.info("status_cb completed " + status.isCompleted() + " retcode "
         + status.getRetCode() + " timeout " + status.getTimeout());
     logger.info("output of cmd execution on owner: " + status.getExecResult());
+    if (mapKey.isEmpty()) return;
+
+    // extract SVI map keys from JSON response
+    ObjectMapper obj = new ObjectMapper();
+    JsonNode result = obj.readTree(status.getExecResult());
+    String execResult = result.get(mapKey).toString();
+
+    if (!SVI_MAP.containsKey(mapKey)) {
+      SVI_MAP.put(mapKey, execResult.getBytes(StandardCharsets.UTF_8));
+    }
   }
 
   protected void onFetch(ServiceInfoModuleState state, FdoSysModuleExtra extra,
@@ -234,7 +248,6 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
     if (!state.isActive()) {
       return;
     }
-
     final Session session = HibernateUtil.getSessionFactory().openSession();
     try {
       Transaction trans = session.beginTransaction();
@@ -288,6 +301,7 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
   protected void getExecCb(ServiceInfoModuleState state,
       FdoSysModuleExtra extra,
       FdoSysInstruction instruction) throws IOException {
+
     ServiceInfoKeyValuePair kv = new ServiceInfoKeyValuePair();
     kv.setKeyName(FdoSys.EXEC_CB);
     kv.setValue(Mapper.INSTANCE.writeValue(instruction.getExecCbArgs()));
