@@ -18,6 +18,9 @@ public class FdoSysInstruction {
   @JsonProperty("exec_cb")
   private String[] execCbArgs;
 
+  @JsonProperty("svc_url")
+  private String[] svcUrlArgs;
+
   @JsonProperty("filedesc")
   private String fileDesc;
 
@@ -45,6 +48,11 @@ public class FdoSysInstruction {
   @JsonIgnore
   public String getFileDesc() {
     return fileDesc;
+  }
+
+  @JsonIgnore
+  public String[] getSvcUrlArgs() {
+    return svcUrlArgs;
   }
 
   @JsonIgnore

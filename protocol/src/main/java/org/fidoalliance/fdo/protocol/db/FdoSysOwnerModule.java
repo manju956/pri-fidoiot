@@ -23,15 +23,15 @@ import java.util.Set;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectWriter;
+import com.fasterxml.jackson.databind.util.JSONPObject;
+
 import org.apache.http.HttpEntity;
-import org.apache.http.client.methods.CloseableHttpResponse;
-import org.apache.http.client.methods.HttpGet;
+import org.apache.http.client.methods.*;
+import org.apache.http.client.utils.URIBuilder;
 import org.apache.http.impl.client.CloseableHttpClient;
-import org.fidoalliance.fdo.protocol.Config;
-import org.fidoalliance.fdo.protocol.HttpClientSupplier;
-import org.fidoalliance.fdo.protocol.InternalServerErrorException;
-import org.fidoalliance.fdo.protocol.LoggerService;
-import org.fidoalliance.fdo.protocol.Mapper;
+import org.fidoalliance.fdo.protocol.*;
 import org.fidoalliance.fdo.protocol.dispatch.ServiceInfoModule;
 import org.fidoalliance.fdo.protocol.dispatch.ServiceInfoSendFunction;
 import org.fidoalliance.fdo.protocol.entity.SystemPackage;
@@ -45,6 +45,7 @@ import org.fidoalliance.fdo.protocol.message.ServiceInfoQueue;
 import org.fidoalliance.fdo.protocol.message.StatusCb;
 import org.fidoalliance.fdo.protocol.serviceinfo.DevMod;
 import org.fidoalliance.fdo.protocol.serviceinfo.FdoSys;
+import org.h2.util.json.JSONObject;
 import org.h2.util.json.JSONString;
 import org.hibernate.Session;
 import org.hibernate.Transaction;
@@ -54,6 +55,11 @@ import org.hibernate.Transaction;
  */
 public class FdoSysOwnerModule implements ServiceInfoModule {
 
+
+  public FdoSysOwnerModule(){
+    varMap = new HashMap<>();
+  }
+  private Map<String, Object> varMap;
 
   private LoggerService logger = new LoggerService(FdoSysOwnerModule.class);
   private Map<String, byte[]> SVI_MAP = new HashMap<>();
@@ -176,6 +182,7 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
     switch (kv.getKey()) {
       case FdoSys.EXEC_CB:
       case FdoSys.FETCH:
+      case FdoSys.SVC_URL:
         extra.setWaiting(true);
         extra.setWaitQueue(extra.getQueue());
         extra.setQueue(new ServiceInfoQueue());
@@ -277,9 +284,10 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
             getExecCb(state, extra, instruction);
           } else if (instruction.getFetchArgs() != null) {
             getFetch(state, extra, instruction);
-          }
+	  } else if (instruction.getSvcUrlArgs() != null) {
+            makeSvcCall(state, extra, instruction);
+	  }
         }
-
       }
       trans.commit();
     } catch (SQLException e) {
@@ -287,6 +295,153 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
     } finally {
       session.close();
     }
+  }
+
+  protected void makeSvcCall(ServiceInfoModuleState state,
+                            FdoSysModuleExtra extra,
+                            FdoSysInstruction instruction) throws IOException {
+    /**
+     * arg 0 -
+     * arg 1 -
+     */
+    String svcUrlArgs[] = instruction.getSvcUrlArgs();
+
+    // Obtain the protocol from arg 0
+    String protocolStr = svcUrlArgs[0];
+    int protocol = Integer.parseInt(protocolStr);
+    SvcCallProtocol x = null;
+    for (SvcCallProtocol p : SvcCallProtocol.values())
+      if (p.toInteger() == protocol)
+        x = p;
+
+    switch (x) {
+      case HTTPS:
+        makeHttpRestCall(state, extra, svcUrlArgs);
+      case FTP:
+      case WS:
+        break;
+    }
+  }
+
+  protected void makeHttpRestCall(ServiceInfoModuleState state,
+                                  FdoSysModuleExtra extra,
+                                  String[] svcUrlArgs) throws IOException{
+    try (CloseableHttpClient httpClient = Config.getWorker(ServiceInfoHttpClientSupplier.class)
+            .get()) {
+
+      String url = svcUrlArgs[1];
+      String httpMethodStr = svcUrlArgs[2];
+      String headersStr = svcUrlArgs[3];
+      String urlParamsStr = svcUrlArgs[4];
+      String bodyStr = svcUrlArgs[5];
+      String responseStr = svcUrlArgs[6]; // comma separated values
+
+      String[] responses = {};
+      if(responseStr != null){
+        responses = responseStr.split(",");
+      }
+
+      URIBuilder builder = getBaseBuilder(url);
+
+      if(urlParamsStr != null){
+        Map<String, Object> map = new ObjectMapper().readValue(urlParamsStr, new TypeReference<Map<String,Object>>(){});
+        for(Map.Entry<String, Object> e : map.entrySet()){
+          String inVal = (String)e.getValue();
+          String paramVal = (String)varMap.get(inVal);
+          builder.setParameter(e.getKey(), paramVal == null ? inVal : paramVal);
+        }
+
+      }
+
+      HttpUriRequest httpRequest = null;
+      int httpMethod = Integer.parseInt(httpMethodStr);
+      switch (httpMethod){
+        case FdoSys.SVC_CALL_HTTP_METHOD_GET:
+          httpRequest = new HttpGet(builder.build());
+          logger.info("HTTP GET method requested for REST endpoint : "+httpRequest.toString());
+          break;
+        case FdoSys.SVC_CALL_HTTP_METHOD_POST:
+          httpRequest = new HttpPost(builder.build());
+          logger.info("HTTP POST method requested for REST endpoint : "+url);
+          break;
+        case FdoSys.SVC_CALL_HTTP_METHOD_PUT:
+          httpRequest = new HttpPut(builder.build());
+          logger.info("HTTP PUT method requested for REST endpoint : "+url);
+          break;
+        case FdoSys.SVC_CALL_HTTP_METHOD_DELETE:
+          httpRequest = new HttpDelete(builder.build());
+          logger.info("HTTP DELETE method requested for REST endpoint : "+url);
+          break;
+        default:
+          logger.error("HTTP method not supported");
+      }
+
+      if(headersStr != null){
+        Map<String, Object> map = new ObjectMapper().readValue(headersStr, new TypeReference<Map<String,Object>>(){});
+        for(Map.Entry<String, Object> e : map.entrySet()){
+          String inVal = (String)e.getValue();
+          String headerVal = (String)varMap.get(inVal);
+          httpRequest.addHeader(e.getKey(), headerVal == null ? inVal : headerVal);
+        }
+      }
+
+      try (CloseableHttpResponse httpResponse = httpClient.execute(httpRequest);) {
+        logger.info(httpResponse.getStatusLine().toString());
+        if (httpResponse.getStatusLine().getStatusCode() != 200) {
+          throw new InternalServerErrorException(httpResponse.getStatusLine().toString());
+        }
+        HttpEntity entity = httpResponse.getEntity();
+        if (entity != null) {
+          logger.info("content length is " + entity.getContentLength());
+
+          try (InputStream input = entity.getContent()) {
+            logger.info("reading data");
+            for (; ; ) {
+              byte[] data = new byte[state.getMtu() - 26];
+              int br = input.read(data);
+              if (br == -1) {
+                break;
+              }
+
+              if (br < data.length) {
+                byte[] temp = data;
+                data = new byte[br];
+                System.arraycopy(temp, 0, data, 0, br);
+                String serialized = new String(temp, StandardCharsets.UTF_8);
+                logger.info(serialized);
+                // Not taking care of nested object for now. Expects a plain JSON Object.
+                Map<String, Object> map = new ObjectMapper().readValue(serialized, new TypeReference<Map<String,Object>>(){});
+
+                for(String k : responses){
+                  String val = (String)map.get(k);
+                  if(val != null)
+                    varMap.put(k, val);
+                }
+//                for(Map.Entry<String, Object> e : varMap.entrySet())
+//                  logger.info("Key : "+e.getKey()+" Value :"+e.getValue());
+              }
+            }
+          }
+        }
+      }
+    } catch (Exception e) {
+      logger.error("Failed to make http(s) REST call : " + e.getMessage());
+      throw new InternalServerErrorException(e);
+    }
+    logger.info("HTTP(S) REST call completed successfully!");
+  }
+
+  private URIBuilder getBaseBuilder(String url) {
+    URIBuilder builder = new URIBuilder();
+    builder.setScheme(url.split(":")[0]);
+    String url_part = url.split("//")[1];
+    String url_sock = url_part.split("/")[0];
+    builder.setHost(url_sock.split(":")[0]);
+    if(url_sock.contains(":"))
+      builder.setPort(Integer.parseInt(url_sock.split(":")[1]));
+    builder.setPath(url_part.substring(url_part.indexOf("/"), url_part.length()));
+
+    return builder;
   }
 
   protected void getExec(ServiceInfoModuleState state,
