@@ -51,7 +51,11 @@ public class StatusCb {
     this.timeout = timeout;
   }
 
-  public void setExecResult(String execResult) { this.execResult = execResult; }
+  public void setExecResult(String execResult) {
+    this.execResult = execResult; 
+  }
 
-  public String getExecResult() { return execResult; }
+  public String getExecResult() {
+    return execResult;
+  }
 }

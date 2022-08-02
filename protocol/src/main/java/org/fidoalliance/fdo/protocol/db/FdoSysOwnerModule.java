@@ -3,6 +3,12 @@
 
 package org.fidoalliance.fdo.protocol.db;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectWriter;
+import com.fasterxml.jackson.databind.util.JSONPObject;
+
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -21,17 +27,21 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectWriter;
-import com.fasterxml.jackson.databind.util.JSONPObject;
-
 import org.apache.http.HttpEntity;
-import org.apache.http.client.methods.*;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpDelete;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.client.methods.HttpPut;
+import org.apache.http.client.methods.HttpUriRequest;
 import org.apache.http.client.utils.URIBuilder;
 import org.apache.http.impl.client.CloseableHttpClient;
-import org.fidoalliance.fdo.protocol.*;
+import org.fidoalliance.fdo.protocol.Config;
+import org.fidoalliance.fdo.protocol.HttpClientSupplier;
+import org.fidoalliance.fdo.protocol.InternalServerErrorException;
+import org.fidoalliance.fdo.protocol.LoggerService;
+import org.fidoalliance.fdo.protocol.Mapper;
+import org.fidoalliance.fdo.protocol.SvcCallProtocol;
 import org.fidoalliance.fdo.protocol.dispatch.ServiceInfoModule;
 import org.fidoalliance.fdo.protocol.dispatch.ServiceInfoSendFunction;
 import org.fidoalliance.fdo.protocol.entity.SystemPackage;
@@ -56,13 +66,13 @@ import org.hibernate.Transaction;
 public class FdoSysOwnerModule implements ServiceInfoModule {
 
 
-  public FdoSysOwnerModule(){
+  public FdoSysOwnerModule() {
     varMap = new HashMap<>();
   }
+
   private Map<String, Object> varMap;
 
   private LoggerService logger = new LoggerService(FdoSysOwnerModule.class);
-  private Map<String, byte[]> SVI_MAP = new HashMap<>();
 
   @Override
   public String getName() {
@@ -106,13 +116,13 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
       case FdoSys.STATUS_CB:
         if (state.isActive()) {
           StatusCb status = Mapper.INSTANCE.readValue(kvPair.getValue(), StatusCb.class);
-          String mapKey = kvPair.getSviMapKey();
 
           //send notification of status
           ServiceInfoKeyValuePair kv = new ServiceInfoKeyValuePair();
           kv.setKeyName(FdoSys.STATUS_CB);
           kv.setValue(Mapper.INSTANCE.writeValue(status));
           extra.getQueue().add(kv);
+          String mapKey = kvPair.getSviMapKey();
           onStatusCb(state, extra, status, mapKey);
           if (status.isCompleted()) {
             // check for error
@@ -203,31 +213,35 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
     return devMap.entrySet().containsAll(filterMap.entrySet());
   }
 
+  private Map<String, byte[]> sviMap = new HashMap<>();
+
   protected void onStatusCb(ServiceInfoModuleState state, FdoSysModuleExtra extra,
       StatusCb status, String mapKey) throws IOException {
     logger.info("status_cb completed " + status.isCompleted() + " retcode "
         + status.getRetCode() + " timeout " + status.getTimeout());
     logger.info("output of cmd execution on owner: " + status.getExecResult());
-    if (mapKey.isEmpty()) return;
+    if (mapKey.isEmpty()) {
+      return;
+    }
 
     // extract SVI map keys from JSON response
     ObjectMapper obj = new ObjectMapper();
     JsonNode result = obj.readTree(status.getExecResult());
     String execResult = result.get(mapKey).toString();
 
-    if (!SVI_MAP.containsKey(mapKey)) {
-      SVI_MAP.put(mapKey, execResult.getBytes(StandardCharsets.UTF_8));
+    if (!sviMap.containsKey(mapKey)) {
+      sviMap.put(mapKey, execResult.getBytes(StandardCharsets.UTF_8));
     }
   }
 
   protected void onFetch(ServiceInfoModuleState state, FdoSysModuleExtra extra,
       byte[] data, String sviMapKey) throws IOException {
     logger.warn(new String(data, StandardCharsets.US_ASCII));
-    if (SVI_MAP.containsKey(sviMapKey)) {
-      logger.warn(new String(SVI_MAP.get(sviMapKey), StandardCharsets.US_ASCII) + "\n");
+    if (sviMap.containsKey(sviMapKey)) {
+      logger.warn(new String(sviMap.get(sviMapKey), StandardCharsets.US_ASCII) + "\n");
     }
     // store the result of fetch in map
-    SVI_MAP.put(sviMapKey, data);
+    sviMap.put(sviMapKey, data);
 
     // Persist the data fetched from device to file
     try {
@@ -284,9 +298,9 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
             getExecCb(state, extra, instruction);
           } else if (instruction.getFetchArgs() != null) {
             getFetch(state, extra, instruction);
-	  } else if (instruction.getSvcUrlArgs() != null) {
+          } else if (instruction.getSvcUrlArgs() != null) {
             makeSvcCall(state, extra, instruction);
-	  }
+          }
         }
       }
       trans.commit();
@@ -300,52 +314,55 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
   protected void makeSvcCall(ServiceInfoModuleState state,
                             FdoSysModuleExtra extra,
                             FdoSysInstruction instruction) throws IOException {
-    /**
-     * arg 0 -
-     * arg 1 -
-     */
-    String svcUrlArgs[] = instruction.getSvcUrlArgs();
+
+    String[] svcUrlArgs = instruction.getSvcUrlArgs();
 
     // Obtain the protocol from arg 0
     String protocolStr = svcUrlArgs[0];
     int protocol = Integer.parseInt(protocolStr);
     SvcCallProtocol x = null;
-    for (SvcCallProtocol p : SvcCallProtocol.values())
-      if (p.toInteger() == protocol)
+    for (SvcCallProtocol p : SvcCallProtocol.values()) {
+      if (p.toInteger() == protocol) {
         x = p;
+      }
+    }
 
     switch (x) {
       case HTTPS:
         makeHttpRestCall(state, extra, svcUrlArgs);
+        break;
       case FTP:
+        break;
       case WS:
+        break;
+      default:
         break;
     }
   }
 
   protected void makeHttpRestCall(ServiceInfoModuleState state,
                                   FdoSysModuleExtra extra,
-                                  String[] svcUrlArgs) throws IOException{
+                                  String[] svcUrlArgs) throws IOException {
     try (CloseableHttpClient httpClient = Config.getWorker(ServiceInfoHttpClientSupplier.class)
             .get()) {
 
       String url = svcUrlArgs[1];
       String httpMethodStr = svcUrlArgs[2];
-      String headersStr = svcUrlArgs[3];
       String urlParamsStr = svcUrlArgs[4];
       String bodyStr = svcUrlArgs[5];
       String responseStr = svcUrlArgs[6]; // comma separated values
 
       String[] responses = {};
-      if(responseStr != null){
+      if (responseStr != null) {
         responses = responseStr.split(",");
       }
 
       URIBuilder builder = getBaseBuilder(url);
 
-      if(urlParamsStr != null){
-        Map<String, Object> map = new ObjectMapper().readValue(urlParamsStr, new TypeReference<Map<String,Object>>(){});
-        for(Map.Entry<String, Object> e : map.entrySet()){
+      if (urlParamsStr != null) {
+        Map<String, Object> map = new ObjectMapper().readValue(urlParamsStr,
+                               new TypeReference<Map<String,Object>>(){});
+        for (Map.Entry<String, Object> e : map.entrySet()) {
           String inVal = (String)e.getValue();
           String paramVal = (String)varMap.get(inVal);
           builder.setParameter(e.getKey(), paramVal == null ? inVal : paramVal);
@@ -355,30 +372,32 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
 
       HttpUriRequest httpRequest = null;
       int httpMethod = Integer.parseInt(httpMethodStr);
-      switch (httpMethod){
+      switch (httpMethod) {
         case FdoSys.SVC_CALL_HTTP_METHOD_GET:
           httpRequest = new HttpGet(builder.build());
-          logger.info("HTTP GET method requested for REST endpoint : "+httpRequest.toString());
+          logger.info("HTTP GET method requested for REST endpoint : " + httpRequest.toString());
           break;
         case FdoSys.SVC_CALL_HTTP_METHOD_POST:
           httpRequest = new HttpPost(builder.build());
-          logger.info("HTTP POST method requested for REST endpoint : "+url);
+          logger.info("HTTP POST method requested for REST endpoint : " + url);
           break;
         case FdoSys.SVC_CALL_HTTP_METHOD_PUT:
           httpRequest = new HttpPut(builder.build());
-          logger.info("HTTP PUT method requested for REST endpoint : "+url);
+          logger.info("HTTP PUT method requested for REST endpoint : " + url);
           break;
         case FdoSys.SVC_CALL_HTTP_METHOD_DELETE:
           httpRequest = new HttpDelete(builder.build());
-          logger.info("HTTP DELETE method requested for REST endpoint : "+url);
+          logger.info("HTTP DELETE method requested for REST endpoint : " + url);
           break;
         default:
           logger.error("HTTP method not supported");
       }
 
-      if(headersStr != null){
-        Map<String, Object> map = new ObjectMapper().readValue(headersStr, new TypeReference<Map<String,Object>>(){});
-        for(Map.Entry<String, Object> e : map.entrySet()){
+      String headersStr = svcUrlArgs[3];
+      if (headersStr != null) {
+        Map<String, Object> map = new ObjectMapper().readValue(headersStr, 
+                        new TypeReference<Map<String,Object>>(){});
+        for (Map.Entry<String, Object> e : map.entrySet()) {
           String inVal = (String)e.getValue();
           String headerVal = (String)varMap.get(inVal);
           httpRequest.addHeader(e.getKey(), headerVal == null ? inVal : headerVal);
@@ -410,15 +429,15 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
                 String serialized = new String(temp, StandardCharsets.UTF_8);
                 logger.info(serialized);
                 // Not taking care of nested object for now. Expects a plain JSON Object.
-                Map<String, Object> map = new ObjectMapper().readValue(serialized, new TypeReference<Map<String,Object>>(){});
+                Map<String, Object> map = new ObjectMapper().readValue(serialized,
+                                new TypeReference<Map<String,Object>>(){});
 
-                for(String k : responses){
+                for (String k : responses) {
                   String val = (String)map.get(k);
-                  if(val != null)
+                  if (val != null) {
                     varMap.put(k, val);
+                  }
                 }
-//                for(Map.Entry<String, Object> e : varMap.entrySet())
-//                  logger.info("Key : "+e.getKey()+" Value :"+e.getValue());
               }
             }
           }
@@ -434,12 +453,13 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
   private URIBuilder getBaseBuilder(String url) {
     URIBuilder builder = new URIBuilder();
     builder.setScheme(url.split(":")[0]);
-    String url_part = url.split("//")[1];
-    String url_sock = url_part.split("/")[0];
-    builder.setHost(url_sock.split(":")[0]);
-    if(url_sock.contains(":"))
-      builder.setPort(Integer.parseInt(url_sock.split(":")[1]));
-    builder.setPath(url_part.substring(url_part.indexOf("/"), url_part.length()));
+    String urlPart = url.split("//")[1];
+    String urlSock = urlPart.split("/")[0];
+    builder.setHost(urlSock.split(":")[0]);
+    if (urlSock.contains(":")) {
+      builder.setPort(Integer.parseInt(urlSock.split(":")[1]));
+    }
+    builder.setPath(urlPart.substring(urlPart.indexOf("/"), urlPart.length()));
 
     return builder;
   }

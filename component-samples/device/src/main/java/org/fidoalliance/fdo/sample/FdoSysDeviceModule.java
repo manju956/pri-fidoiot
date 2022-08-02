@@ -3,6 +3,11 @@
 
 package org.fidoalliance.fdo.sample;
 
+import static org.bouncycastle.oer.its.CertificateId.none;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -17,13 +22,16 @@ import java.nio.file.attribute.FileAttribute;
 import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.time.Duration;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Predicate;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import netscape.javascript.JSObject;
 import org.fidoalliance.fdo.protocol.InternalServerErrorException;
 import org.fidoalliance.fdo.protocol.LoggerService;
@@ -36,9 +44,6 @@ import org.fidoalliance.fdo.protocol.message.ServiceInfoModuleState;
 import org.fidoalliance.fdo.protocol.message.ServiceInfoQueue;
 import org.fidoalliance.fdo.protocol.message.StatusCb;
 import org.fidoalliance.fdo.protocol.serviceinfo.FdoSys;
-
-import static org.bouncycastle.oer.its.CertificateId.none;
-
 
 public class FdoSysDeviceModule implements ServiceInfoModule {
 
@@ -257,19 +262,19 @@ public class FdoSysDeviceModule implements ServiceInfoModule {
     }
 
     // extract last argument which contains key(s) of exec_cb response
-    mapKey = argList.get(argList.size()-1);
+    mapKey = argList.get(argList.size() - 1);
     try {
       ProcessBuilder builder = new ProcessBuilder(argList);
       builder.redirectErrorStream(true);
       builder.redirectOutput(getExecOutputRedirect());
       execProcess = builder.start();
-      String proc_out = new String(execProcess.getInputStream().readAllBytes()).replace("\n", "");
+      String procOut = new String(execProcess.getInputStream().readAllBytes()).replace("\n", "");
       statusTimeout = DEFAULT_STATUS_TIMEOUT;
 
       // construct JSON response having execution result
       ObjectMapper mapper = new ObjectMapper();
       ObjectNode response = mapper.createObjectNode();
-      response.put(mapKey, proc_out);
+      response.put(mapKey, procOut);
       execResult = new String(mapper.writeValueAsBytes(response), StandardCharsets.US_ASCII);
 
       //set the first status check
@@ -301,7 +306,8 @@ public class FdoSysDeviceModule implements ServiceInfoModule {
     }
   }
 
-  private void createStatus(boolean completed, int retCode, int timeout, String execResult, String mapKey) throws IOException {
+  private void createStatus(boolean completed, int retCode, int timeout,
+        String execResult, String mapKey) throws IOException {
 
     ServiceInfoKeyValuePair kv = new ServiceInfoKeyValuePair();
     kv.setKeyName(FdoSys.STATUS_CB);

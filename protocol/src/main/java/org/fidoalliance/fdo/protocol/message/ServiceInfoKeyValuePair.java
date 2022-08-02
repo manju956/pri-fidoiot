@@ -11,7 +11,7 @@ import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import org.fidoalliance.fdo.protocol.serialization.GenericArraySerializer;
 
 @JsonFormat(shape = JsonFormat.Shape.ARRAY)
-@JsonPropertyOrder({"key", "value", "svi_map_key"})
+@JsonPropertyOrder({"key", "value", "sviMapKey"})
 @JsonSerialize(using = GenericArraySerializer.class)
 public class ServiceInfoKeyValuePair {
 
@@ -21,8 +21,8 @@ public class ServiceInfoKeyValuePair {
   @JsonProperty("value")
   private byte[] value;
 
-  @JsonProperty("svi_map_key")
-  private String svi_map_key;
+  @JsonProperty("sviMapKey")
+  private String sviMapKey;
 
   @JsonIgnore
   public String getKey() {
@@ -45,9 +45,13 @@ public class ServiceInfoKeyValuePair {
   }
 
   @JsonIgnore
-  public String getSviMapKey() { return svi_map_key; }
+  public String getSviMapKey() {
+    return sviMapKey;
+  }
 
   @JsonIgnore
-  public void setSviMapKey(String svi_map_key) { this.svi_map_key = svi_map_key; }
+  public void setSviMapKey(String sviMapKey) {
+    this.sviMapKey = sviMapKey;
+  }
 
 }
