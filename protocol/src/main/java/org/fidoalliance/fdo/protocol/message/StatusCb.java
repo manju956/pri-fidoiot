@@ -11,7 +11,7 @@ import org.fidoalliance.fdo.protocol.serialization.GenericArraySerializer;
 
 
 @JsonFormat(shape = JsonFormat.Shape.ARRAY)
-@JsonPropertyOrder({"completed", "retCode", "timeout", "execResult"})
+@JsonPropertyOrder({"completed", "retCode", "timeout"})
 @JsonSerialize(using = GenericArraySerializer.class)
 public class StatusCb {
 
@@ -23,9 +23,6 @@ public class StatusCb {
 
   @JsonProperty("timeout")
   int timeout;
-
-  @JsonProperty("execResult")
-  String execResult;
 
   public boolean isCompleted() {
     return completed;
@@ -49,13 +46,5 @@ public class StatusCb {
 
   public void setTimeout(int timeout) {
     this.timeout = timeout;
-  }
-
-  public void setExecResult(String execResult) {
-    this.execResult = execResult; 
-  }
-
-  public String getExecResult() {
-    return execResult;
   }
 }

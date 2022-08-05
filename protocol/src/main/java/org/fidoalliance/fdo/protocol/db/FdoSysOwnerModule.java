@@ -4,20 +4,12 @@
 package org.fidoalliance.fdo.protocol.db;
 
 import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.ObjectWriter;
-import com.fasterxml.jackson.databind.util.JSONPObject;
-
-import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.FileSystemException;
-import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.sql.Blob;
@@ -49,14 +41,14 @@ import org.fidoalliance.fdo.protocol.entity.SystemResource;
 import org.fidoalliance.fdo.protocol.message.AnyType;
 import org.fidoalliance.fdo.protocol.message.DevModList;
 import org.fidoalliance.fdo.protocol.message.EotResult;
+import org.fidoalliance.fdo.protocol.message.FetchMessage;
 import org.fidoalliance.fdo.protocol.message.ServiceInfoKeyValuePair;
 import org.fidoalliance.fdo.protocol.message.ServiceInfoModuleState;
 import org.fidoalliance.fdo.protocol.message.ServiceInfoQueue;
 import org.fidoalliance.fdo.protocol.message.StatusCb;
+import org.fidoalliance.fdo.protocol.message.StatusCbExtended;
 import org.fidoalliance.fdo.protocol.serviceinfo.DevMod;
 import org.fidoalliance.fdo.protocol.serviceinfo.FdoSys;
-import org.h2.util.json.JSONObject;
-import org.h2.util.json.JSONString;
 import org.hibernate.Session;
 import org.hibernate.Transaction;
 
@@ -87,7 +79,6 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
   @Override
   public void receive(ServiceInfoModuleState state, ServiceInfoKeyValuePair kvPair)
       throws IOException {
-    logger.info("in receive()::FdoSysOwnerModule...... \n\n\n");
     FdoSysModuleExtra extra = state.getExtra().covertValue(FdoSysModuleExtra.class);
     switch (kvPair.getKey()) {
       case DevMod.KEY_MODULES: {
@@ -115,18 +106,25 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
         break;
       case FdoSys.STATUS_CB:
         if (state.isActive()) {
-          StatusCb status = Mapper.INSTANCE.readValue(kvPair.getValue(), StatusCb.class);
+          StatusCbExtended statusCbExt = Mapper.INSTANCE.readValue(
+                  kvPair.getValue(), StatusCbExtended.class);
+
+          StatusCb status = new StatusCb();
+          status.setCompleted(statusCbExt.isCompleted());
+          status.setTimeout(statusCbExt.getTimeout());
+          status.setRetCode(statusCbExt.getRetCode());
 
           //send notification of status
           ServiceInfoKeyValuePair kv = new ServiceInfoKeyValuePair();
           kv.setKeyName(FdoSys.STATUS_CB);
           kv.setValue(Mapper.INSTANCE.writeValue(status));
           extra.getQueue().add(kv);
-          String mapKey = kvPair.getSviMapKey();
-          onStatusCb(state, extra, status, mapKey);
-          if (status.isCompleted()) {
+
+          String mapKey = statusCbExt.getSviMapKey();
+          onStatusCb(state, extra, statusCbExt, mapKey);
+          if (statusCbExt.isCompleted()) {
             // check for error
-            if (status.getRetCode() != 0) {
+            if (statusCbExt.getRetCode() != 0) {
               throw new InternalServerErrorException("Exec_cb status returned failure.");
             }
             extra.setWaiting(false);
@@ -136,16 +134,15 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
         }
         break;
       case FdoSys.DATA: {
-        logger.info("\nFDO SYS message is DATA\n\n");
         if (state.isActive()) {
-          byte[] data = Mapper.INSTANCE.readValue(kvPair.getValue(), byte[].class);
-          String sviMapKey = kvPair.getSviMapKey();
+          FetchMessage msg = Mapper.INSTANCE.readValue(kvPair.getValue(), FetchMessage.class);
+          byte[] data = msg.getDataBytes();
+          String sviMapKey = msg.getSviMapKey();
           onFetch(state, extra, data, sviMapKey);
         }
       }
       break;
       case FdoSys.EOT:
-        logger.info("\nFDO SYS message is EOT\n");
         if (state.isActive()) {
           extra.setWaiting(false);
           extra.setQueue(extra.getWaitQueue());
@@ -165,7 +162,6 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
       throws IOException {
 
     FdoSysModuleExtra extra = state.getExtra().covertValue(FdoSysModuleExtra.class);
-
     if (!extra.isLoaded() && infoReady(extra)) {
       load(state, extra);
       extra.setLoaded(true);
@@ -216,7 +212,7 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
   private Map<String, byte[]> sviMap = new HashMap<>();
 
   protected void onStatusCb(ServiceInfoModuleState state, FdoSysModuleExtra extra,
-      StatusCb status, String mapKey) throws IOException {
+      StatusCbExtended status, String mapKey) throws IOException {
     logger.info("status_cb completed " + status.isCompleted() + " retcode "
         + status.getRetCode() + " timeout " + status.getTimeout());
     logger.info("output of cmd execution on owner: " + status.getExecResult());
@@ -224,24 +220,20 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
       return;
     }
 
-    // extract SVI map keys from JSON response
-    ObjectMapper obj = new ObjectMapper();
-    JsonNode result = obj.readTree(status.getExecResult());
-    String execResult = result.get(mapKey).toString();
-
-    if (!sviMap.containsKey(mapKey)) {
-      sviMap.put(mapKey, execResult.getBytes(StandardCharsets.UTF_8));
+    if (!varMap.containsKey(mapKey)) {
+      varMap.put(mapKey, status.getExecResult().getBytes(StandardCharsets.UTF_8));
     }
   }
 
   protected void onFetch(ServiceInfoModuleState state, FdoSysModuleExtra extra,
       byte[] data, String sviMapKey) throws IOException {
+    logger.info("data fetched::: ");
     logger.warn(new String(data, StandardCharsets.US_ASCII));
-    if (sviMap.containsKey(sviMapKey)) {
-      logger.warn(new String(sviMap.get(sviMapKey), StandardCharsets.US_ASCII) + "\n");
+    if (varMap.containsKey(sviMapKey)) {
+      logger.warn(varMap.get(sviMapKey));
     }
     // store the result of fetch in map
-    sviMap.put(sviMapKey, data);
+    varMap.put(sviMapKey, data);
 
     // Persist the data fetched from device to file
     try {
@@ -361,7 +353,7 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
 
       if (urlParamsStr != null) {
         Map<String, Object> map = new ObjectMapper().readValue(urlParamsStr,
-                               new TypeReference<Map<String,Object>>(){});
+                               new TypeReference<>(){});
         for (Map.Entry<String, Object> e : map.entrySet()) {
           String inVal = (String)e.getValue();
           String paramVal = (String)varMap.get(inVal);
@@ -396,7 +388,7 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
       String headersStr = svcUrlArgs[3];
       if (headersStr != null) {
         Map<String, Object> map = new ObjectMapper().readValue(headersStr, 
-                        new TypeReference<Map<String,Object>>(){});
+                        new TypeReference<>(){});
         for (Map.Entry<String, Object> e : map.entrySet()) {
           String inVal = (String)e.getValue();
           String headerVal = (String)varMap.get(inVal);
@@ -430,7 +422,7 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
                 logger.info(serialized);
                 // Not taking care of nested object for now. Expects a plain JSON Object.
                 Map<String, Object> map = new ObjectMapper().readValue(serialized,
-                                new TypeReference<Map<String,Object>>(){});
+                                new TypeReference<>(){});
 
                 for (String k : responses) {
                   String val = (String)map.get(k);
@@ -544,16 +536,17 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
     String resource = instruction.getResource();
     resource = resource.replace("$(guid)", state.getGuid().toString());
 
-    try (CloseableHttpClient httpClient = Config.getWorker(ServiceInfoHttpClientSupplier.class)
+    try (CloseableHttpClient httpClient = Config.getWorker(HttpClientSupplier.class)
         .get()) {
 
       logger.info("HTTP(S) GET: " + resource);
       HttpGet httpRequest = new HttpGet(resource);
       try (CloseableHttpResponse httpResponse = httpClient.execute(httpRequest);) {
         logger.info(httpResponse.getStatusLine().toString());
-        if (httpResponse.getStatusLine().getStatusCode() != 200) {
+        /*if (httpResponse.getStatusLine().getStatusCode() != 200) {
           throw new InternalServerErrorException(httpResponse.getStatusLine().toString());
         }
+        */
         HttpEntity entity = httpResponse.getEntity();
         if (entity != null) {
           logger.info("content length is " + entity.getContentLength());

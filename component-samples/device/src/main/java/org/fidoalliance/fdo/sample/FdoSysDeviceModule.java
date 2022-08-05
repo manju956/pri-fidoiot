@@ -43,6 +43,7 @@ import org.fidoalliance.fdo.protocol.message.ServiceInfoKeyValuePair;
 import org.fidoalliance.fdo.protocol.message.ServiceInfoModuleState;
 import org.fidoalliance.fdo.protocol.message.ServiceInfoQueue;
 import org.fidoalliance.fdo.protocol.message.StatusCb;
+import org.fidoalliance.fdo.protocol.message.StatusCbExtended;
 import org.fidoalliance.fdo.protocol.serviceinfo.FdoSys;
 
 public class FdoSysDeviceModule implements ServiceInfoModule {
@@ -312,13 +313,13 @@ public class FdoSysDeviceModule implements ServiceInfoModule {
     ServiceInfoKeyValuePair kv = new ServiceInfoKeyValuePair();
     kv.setKeyName(FdoSys.STATUS_CB);
 
-    StatusCb status = new StatusCb();
+    StatusCbExtended status = new StatusCbExtended();
     status.setCompleted(completed);
     status.setRetCode(retCode);
     status.setTimeout(timeout);
     status.setExecResult(execResult);
     kv.setValue(Mapper.INSTANCE.writeValue(status));
-    kv.setSviMapKey(mapKey);
+    // kv.setSviMapKey(mapKey);
     queue.add(kv);
   }
 
@@ -342,7 +343,7 @@ public class FdoSysDeviceModule implements ServiceInfoModule {
         }
         ServiceInfoKeyValuePair kv = new ServiceInfoKeyValuePair();
         kv.setKeyName(FdoSys.DATA);
-        kv.setSviMapKey(sysKey);
+        // kv.setSviMapKey(sysKey);
         kv.setValue(Mapper.INSTANCE.writeValue(data));
         queue.add(kv);
       }
