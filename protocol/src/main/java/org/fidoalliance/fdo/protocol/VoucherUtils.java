@@ -9,7 +9,6 @@ import java.io.StringReader;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.security.KeyFactory;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.cert.CertPath;
@@ -18,28 +17,14 @@ import java.security.cert.CertificateEncodingException;
 import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
-import java.security.interfaces.ECPublicKey;
-import java.security.spec.ECParameterSpec;
-import java.security.spec.PKCS8EncodedKeySpec;
-import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Date;
 import java.util.List;
-import java.util.UUID;
-import org.bouncycastle.asn1.ASN1Sequence;
-import org.bouncycastle.asn1.pkcs.PrivateKeyInfo;
-import org.bouncycastle.asn1.sec.ECPrivateKey;
-import org.bouncycastle.asn1.x509.AlgorithmIdentifier;
-import org.bouncycastle.asn1.x9.X9ObjectIdentifiers;
-import org.bouncycastle.jce.spec.ECNamedCurveSpec;
+
 import org.bouncycastle.openssl.PEMParser;
 import org.bouncycastle.util.io.pem.PemObject;
-import org.fidoalliance.fdo.protocol.api.RvInfo;
+import org.fidoalliance.fdo.protocol.db.StandardExtraInfoSupplier;
 import org.fidoalliance.fdo.protocol.dispatch.CryptoService;
-import org.fidoalliance.fdo.protocol.dispatch.ExtraInfoSupplier;
-import org.fidoalliance.fdo.protocol.dispatch.ManufacturerKeySupplier;
-import org.fidoalliance.fdo.protocol.dispatch.OwnerKeySupplier;
-import org.fidoalliance.fdo.protocol.message.AnyType;
 import org.fidoalliance.fdo.protocol.message.CoseSign1;
 import org.fidoalliance.fdo.protocol.message.Guid;
 import org.fidoalliance.fdo.protocol.message.Hash;
@@ -49,13 +34,6 @@ import org.fidoalliance.fdo.protocol.message.OwnershipVoucher;
 import org.fidoalliance.fdo.protocol.message.OwnershipVoucherEntries;
 import org.fidoalliance.fdo.protocol.message.OwnershipVoucherEntryPayload;
 import org.fidoalliance.fdo.protocol.message.OwnershipVoucherHeader;
-import org.fidoalliance.fdo.protocol.message.RendezvousDirective;
-import org.fidoalliance.fdo.protocol.message.RendezvousInfo;
-import org.fidoalliance.fdo.protocol.message.RendezvousInstruction;
-import org.fidoalliance.fdo.protocol.message.RendezvousProtocol;
-import org.fidoalliance.fdo.protocol.message.RendezvousVariable;
-import org.fidoalliance.fdo.protocol.message.To2AddressEntries;
-import org.fidoalliance.fdo.protocol.serialization.RendezvousInstructionDeserializer;
 
 /**
  * Ownership Voucher utilities.
@@ -78,8 +56,8 @@ public class VoucherUtils {
    */
 
   public static OwnershipVoucher extend(OwnershipVoucher voucher,
-      KeyResolver keyResolver, Certificate[] nextChain)
-      throws IOException {
+                                        KeyResolver keyResolver, Certificate[] nextChain,
+                                        byte[] clientTpmEk) throws IOException {
 
     Hash mac = voucher.getHmac();
     HashType hashType = new AlgorithmFinder().getCompatibleHashType(mac.getHashType());
@@ -110,7 +88,7 @@ public class VoucherUtils {
     OwnershipVoucherEntryPayload entryPayload = new OwnershipVoucherEntryPayload();
     entryPayload.setPreviousHash(prevHash);
     entryPayload.setHeaderHash(hdrHash);
-    entryPayload.setExtra(Config.getWorker(ExtraInfoSupplier.class).get());
+    entryPayload.setExtra(clientTpmEk);
 
     OwnerPublicKey nextOwnerKey = cs.encodeKey(prevOwnerPubKey.getType(),
         prevOwnerPubKey.getEnc(),

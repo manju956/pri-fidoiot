@@ -36,10 +36,12 @@ public class MfgVoucher extends RestApi {
     KeyResolver resolver = Config.getWorker(ManufacturerKeySupplier.class).get();
 
     List<Certificate> list = PemLoader.loadCerts(getStringBody());
+    Certificate tpmEk = list.remove(list.size() - 1);
     Certificate[] certs = list.stream()
         .toArray(Certificate[]::new);
 
-    OwnershipVoucher result = VoucherUtils.extend(voucher, resolver, certs);
+
+    OwnershipVoucher result = VoucherUtils.extend(voucher, resolver, certs, tpmEk.getEncoded());
     byte[] data = Mapper.INSTANCE.writeValue(result);
 
     getResponse().setContentType(HttpUtils.HTTP_PLAIN_TEXT);

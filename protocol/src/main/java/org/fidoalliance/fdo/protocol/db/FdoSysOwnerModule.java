@@ -5,17 +5,24 @@ package org.fidoalliance.fdo.protocol.db;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URL;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
+import java.security.cert.Certificate;
+import java.security.cert.CertificateException;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
 import java.sql.Blob;
 import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -28,6 +35,11 @@ import org.apache.http.client.methods.HttpPut;
 import org.apache.http.client.methods.HttpUriRequest;
 import org.apache.http.client.utils.URIBuilder;
 import org.apache.http.impl.client.CloseableHttpClient;
+import org.bouncycastle.asn1.x509.AccessDescription;
+import org.bouncycastle.asn1.x509.AuthorityInformationAccess;
+import org.bouncycastle.asn1.x509.Extension;
+import org.bouncycastle.asn1.x509.GeneralName;
+import org.bouncycastle.asn1.x509.X509ObjectIdentifiers;
 import org.fidoalliance.fdo.protocol.Config;
 import org.fidoalliance.fdo.protocol.HttpClientSupplier;
 import org.fidoalliance.fdo.protocol.InternalServerErrorException;
@@ -36,12 +48,17 @@ import org.fidoalliance.fdo.protocol.Mapper;
 import org.fidoalliance.fdo.protocol.SvcCallProtocol;
 import org.fidoalliance.fdo.protocol.dispatch.ServiceInfoModule;
 import org.fidoalliance.fdo.protocol.dispatch.ServiceInfoSendFunction;
+import org.fidoalliance.fdo.protocol.dispatch.VoucherQueryFunction;
 import org.fidoalliance.fdo.protocol.entity.SystemPackage;
 import org.fidoalliance.fdo.protocol.entity.SystemResource;
 import org.fidoalliance.fdo.protocol.message.AnyType;
+import org.fidoalliance.fdo.protocol.message.CoseSign1;
 import org.fidoalliance.fdo.protocol.message.DevModList;
 import org.fidoalliance.fdo.protocol.message.EotResult;
 import org.fidoalliance.fdo.protocol.message.FetchMessage;
+import org.fidoalliance.fdo.protocol.message.OwnershipVoucher;
+import org.fidoalliance.fdo.protocol.message.OwnershipVoucherEntries;
+import org.fidoalliance.fdo.protocol.message.OwnershipVoucherEntryPayload;
 import org.fidoalliance.fdo.protocol.message.ServiceInfoKeyValuePair;
 import org.fidoalliance.fdo.protocol.message.ServiceInfoModuleState;
 import org.fidoalliance.fdo.protocol.message.ServiceInfoQueue;
@@ -296,7 +313,7 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
         }
       }
       trans.commit();
-    } catch (SQLException e) {
+    } catch (SQLException | CertificateException e) {
       throw new InternalServerErrorException(e);
     } finally {
       session.close();
@@ -305,7 +322,22 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
 
   protected void makeSvcCall(ServiceInfoModuleState state,
                             FdoSysModuleExtra extra,
-                            FdoSysInstruction instruction) throws IOException {
+                            FdoSysInstruction instruction)
+                      throws IOException, CertificateException {
+
+    String deviceGuid = state.getGuid().toString();
+    OwnershipVoucher voucher = Config.getWorker(VoucherQueryFunction.class).apply(deviceGuid);
+    OwnershipVoucherEntries entries = voucher.getEntries();
+    CoseSign1 entry = entries.getLast();
+
+    OwnershipVoucherEntryPayload entryPayload =
+            Mapper.INSTANCE.readValue(entry.getPayload(), OwnershipVoucherEntryPayload.class);
+    byte[] bytes = entryPayload.getExtra();
+    String hello = new String(bytes, StandardCharsets.UTF_8);
+    X509Certificate cert = (X509Certificate) CertificateFactory.getInstance("X.509")
+                                  .generateCertificate(new ByteArrayInputStream(bytes));
+
+    X509Certificate rootCaCert = getRootCaCert(cert);
 
     String[] svcUrlArgs = instruction.getSvcUrlArgs();
 
@@ -330,6 +362,26 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
       default:
         break;
     }
+  }
+
+  private X509Certificate getRootCaCert(X509Certificate cert)
+                throws CertificateException, IOException {
+
+    byte[] extension = cert.getExtensionValue(Extension.authorityInfoAccess.getId());
+    AuthorityInformationAccess aia = AuthorityInformationAccess.getInstance(extension);
+    AccessDescription[] descriptions = aia.getAccessDescriptions();
+    for (AccessDescription ad : descriptions) {
+      if (ad.getAccessMethod().equals(X509ObjectIdentifiers.id_ad_caIssuers)) {
+        GeneralName location = ad.getAccessLocation();
+        if (location.getTagNo() == GeneralName.uniformResourceIdentifier) {
+          String issuerUrl = location.getName().toString();
+          URL url = new URL(issuerUrl);
+          return (X509Certificate) CertificateFactory.getInstance("X.509")
+                                         .generateCertificate(url.openStream());
+        }
+      }
+    }
+    return null;
   }
 
   protected void makeHttpRestCall(ServiceInfoModuleState state,

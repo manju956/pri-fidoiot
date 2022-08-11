@@ -24,7 +24,7 @@ Help()
     # Display Help
     echo "This script is used to extend the voucher with provided serial number, upload to owner and trigger TO0"
     echo
-    echo "Syntax: ./extend_upload.sh [-a|h|m|o|p|s|u]"
+    echo "Syntax: ./extend_upload.sh [-a|h|m|o|p|s|u|e]"
     echo "options:"
     echo "a     Certificate Attestation type to be retrieved, if not provided defaults to SECP256R1."
     echo "k     Manufacturer API password, if not provided defaults to blank."
@@ -33,14 +33,16 @@ Help()
     echo "p     Owner API password, if not provided defaults to blank."
     echo "u     API username, if not provided defaults to apiUser"
     echo "s     Serial number to which extension has to performed."
+    echo "e     EK of the TPM on platform."
     echo "h     Help."
     echo
 }
 
-while getopts a:hk:m:o:p:s:u: flag;
+while getopts a:e:hk:m:o:p:s:u: flag;
 do
     case "${flag}" in
         a) attestation_type=${OPTARG};;
+        e) ek_cert=${OPTARG};;
         h) Help
            exit 0;;
         k) mfg_api_passwd=${OPTARG};;
@@ -83,7 +85,12 @@ get_cert_code=$(tail -n1 <<< "$get_cert")
 if [ "$get_cert_code" = "200" ]; then
     echo "Success in downloading ${attestation_type} owner certificate to owner_cert_${attestation_type}.txt"
     owner_certificate=`cat owner_cert_${attestation_type}.txt`
-    get_voucher=$(curl --silent -w "%{http_code}\n" -D - --digest -u ${api_user}:${mfg_api_passwd} --location --request POST "http://${mfg_ip}:${mfg_port}/api/v1/mfg/vouchers/${serial_no}" --header 'Content-Type: text/plain' --data-raw  "$owner_certificate" -o ${serial_no}_voucher.txt)
+
+    cat owner_cert_${attestation_type}.txt > all_cert.pem
+    echo ${ek_cert} >> all_cert.pem
+    all_cert=`cat all_cert.pem`
+
+    get_voucher=$(curl --silent -w "%{http_code}\n" -D - --digest -u ${api_user}:${mfg_api_passwd} --location --request POST "http://${mfg_ip}:${mfg_port}/api/v1/mfg/vouchers/${serial_no}" --header 'Content-Type: text/plain' --data-raw  "$all_cert" -o ${serial_no}_voucher.txt)
     get_voucher_code=$(tail -n1 <<< "$get_voucher")
     if [ "$get_voucher_code" = "200" ]; then
         echo "Success in downloading extended voucher for device with serial number ${serial_no}"

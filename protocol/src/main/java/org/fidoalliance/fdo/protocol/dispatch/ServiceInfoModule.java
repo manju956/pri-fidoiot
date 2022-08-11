@@ -4,6 +4,8 @@
 package org.fidoalliance.fdo.protocol.dispatch;
 
 import java.io.IOException;
+import java.security.cert.CertificateException;
+
 import org.fidoalliance.fdo.protocol.message.ServiceInfoKeyValuePair;
 import org.fidoalliance.fdo.protocol.message.ServiceInfoModuleState;
 
