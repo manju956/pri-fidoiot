@@ -34,7 +34,10 @@ import org.apache.http.client.methods.HttpPost;
 import org.apache.http.client.methods.HttpPut;
 import org.apache.http.client.methods.HttpUriRequest;
 import org.apache.http.client.utils.URIBuilder;
+import org.apache.http.entity.ContentType;
+import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.util.EntityUtils;
 import org.bouncycastle.asn1.x509.AccessDescription;
 import org.bouncycastle.asn1.x509.AuthorityInformationAccess;
 import org.bouncycastle.asn1.x509.Extension;
@@ -393,7 +396,6 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
       String url = svcUrlArgs[1];
       String httpMethodStr = svcUrlArgs[2];
       String urlParamsStr = svcUrlArgs[4];
-      String bodyStr = svcUrlArgs[5];
       String responseStr = svcUrlArgs[6]; // comma separated values
 
       String[] responses = {};
@@ -411,8 +413,9 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
           String paramVal = (String)varMap.get(inVal);
           builder.setParameter(e.getKey(), paramVal == null ? inVal : paramVal);
         }
-
       }
+
+      String bodyStr = svcUrlArgs[5];
 
       HttpUriRequest httpRequest = null;
       int httpMethod = Integer.parseInt(httpMethodStr);
@@ -422,7 +425,9 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
           logger.info("HTTP GET method requested for REST endpoint : " + httpRequest.toString());
           break;
         case FdoSys.SVC_CALL_HTTP_METHOD_POST:
-          httpRequest = new HttpPost(builder.build());
+          HttpPost httpPost = new HttpPost(builder.build());
+          httpPost.setEntity(new StringEntity(bodyStr, ContentType.APPLICATION_JSON));
+          httpRequest = httpPost;
           logger.info("HTTP POST method requested for REST endpoint : " + url);
           break;
         case FdoSys.SVC_CALL_HTTP_METHOD_PUT:
@@ -448,6 +453,7 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
         }
       }
 
+
       try (CloseableHttpResponse httpResponse = httpClient.execute(httpRequest);) {
         logger.info(httpResponse.getStatusLine().toString());
         if (httpResponse.getStatusLine().getStatusCode() != 200) {
@@ -472,14 +478,22 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
                 System.arraycopy(temp, 0, data, 0, br);
                 String serialized = new String(temp, StandardCharsets.UTF_8);
                 logger.info(serialized);
-                // Not taking care of nested object for now. Expects a plain JSON Object.
-                Map<String, Object> map = new ObjectMapper().readValue(serialized,
-                                new TypeReference<>(){});
 
-                for (String k : responses) {
-                  String val = (String)map.get(k);
-                  if (val != null) {
-                    varMap.put(k, val);
+                // Content-type : application/jwt
+                if (ContentType.getOrDefault(entity).getMimeType().equals("application/jwt")) {
+                  varMap.put(responses[0], "Bearer " + serialized);
+                } else {
+                  // Not taking care of nested object for now. Expects a plain JSON Object.
+                  // Else handling on application/json
+                  Map<String, Object> map = new ObjectMapper().readValue(serialized,
+                           new TypeReference<>() {}
+                       );
+
+                  for (String k : responses) {
+                    String val = (String) map.get(k);
+                    if (val != null) {
+                      varMap.put(k, val);
+                    }
                   }
                 }
               }
