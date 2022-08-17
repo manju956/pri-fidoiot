@@ -87,7 +87,7 @@ if [ "$get_cert_code" = "200" ]; then
     owner_certificate=`cat owner_cert_${attestation_type}.txt`
 
     cat owner_cert_${attestation_type}.txt > all_cert.pem
-    echo ${ek_cert} >> all_cert.pem
+    printf "%b" "${ek_cert}" >> all_cert.pem
     all_cert=`cat all_cert.pem`
 
     get_voucher=$(curl --silent -w "%{http_code}\n" -D - --digest -u ${api_user}:${mfg_api_passwd} --location --request POST "http://${mfg_ip}:${mfg_port}/api/v1/mfg/vouchers/${serial_no}" --header 'Content-Type: text/plain' --data-raw  "$all_cert" -o ${serial_no}_voucher.txt)
