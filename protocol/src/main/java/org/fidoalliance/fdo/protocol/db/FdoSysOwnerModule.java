@@ -20,6 +20,7 @@ import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.sql.Blob;
 import java.sql.SQLException;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -340,7 +341,12 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
     X509Certificate cert = (X509Certificate) CertificateFactory.getInstance("X.509")
                                   .generateCertificate(new ByteArrayInputStream(bytes));
 
+    String b64EncodedTpmEc = Base64.getEncoder().encodeToString(cert.getEncoded());
+    varMap.put("tpmEc", b64EncodedTpmEc);
+
     X509Certificate rootCaCert = getRootCaCert(cert);
+    String b64EncodedCaCert = Base64.getEncoder().encodeToString(rootCaCert.getEncoded());
+    varMap.put("rootCaCert", b64EncodedCaCert);
 
     String[] svcUrlArgs = instruction.getSvcUrlArgs();
 
