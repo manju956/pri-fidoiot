@@ -344,10 +344,6 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
     String b64EncodedTpmEc = Base64.getEncoder().encodeToString(cert.getEncoded());
     varMap.put("tpmEc", b64EncodedTpmEc);
 
-    X509Certificate rootCaCert = getRootCaCert(cert);
-    String b64EncodedCaCert = Base64.getEncoder().encodeToString(rootCaCert.getEncoded());
-    varMap.put("rootCaCert", b64EncodedCaCert);
-
     String[] svcUrlArgs = instruction.getSvcUrlArgs();
 
     // Obtain the protocol from arg 0
@@ -371,26 +367,6 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
       default:
         break;
     }
-  }
-
-  private X509Certificate getRootCaCert(X509Certificate cert)
-                throws CertificateException, IOException {
-
-    byte[] extension = cert.getExtensionValue(Extension.authorityInfoAccess.getId());
-    AuthorityInformationAccess aia = AuthorityInformationAccess.getInstance(extension);
-    AccessDescription[] descriptions = aia.getAccessDescriptions();
-    for (AccessDescription ad : descriptions) {
-      if (ad.getAccessMethod().equals(X509ObjectIdentifiers.id_ad_caIssuers)) {
-        GeneralName location = ad.getAccessLocation();
-        if (location.getTagNo() == GeneralName.uniformResourceIdentifier) {
-          String issuerUrl = location.getName().toString();
-          URL url = new URL(issuerUrl);
-          return (X509Certificate) CertificateFactory.getInstance("X.509")
-                                         .generateCertificate(url.openStream());
-        }
-      }
-    }
-    return null;
   }
 
   protected void makeHttpRestCall(ServiceInfoModuleState state,
