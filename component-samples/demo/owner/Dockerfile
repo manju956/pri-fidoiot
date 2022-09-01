@@ -10,6 +10,11 @@ RUN useradd -ms /bin/bash fdo
 WORKDIR /home/fdo/
 RUN mkdir -p /home/fdo/lib /home/fdo/WEB-INF /home/fdo/app-data
 
+COPY aas-ca.cer .
+RUN keytool -import -alias aas -keystore /etc/ssl/certs/java/cacerts -file aas-ca.cer -noprompt -storepass changeit
+COPY hvs-ca.cer .
+RUN keytool -import -alias hvs -keystore /etc/ssl/certs/java/cacerts -file hvs-ca.cer -noprompt -storepass changeit
+
 # Setup service dependencies
 COPY ./lib ./lib/
 COPY ./WEB-INF ./WEB-INF

@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.StringWriter;
 import java.net.URL;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
@@ -44,6 +45,7 @@ import org.bouncycastle.asn1.x509.AuthorityInformationAccess;
 import org.bouncycastle.asn1.x509.Extension;
 import org.bouncycastle.asn1.x509.GeneralName;
 import org.bouncycastle.asn1.x509.X509ObjectIdentifiers;
+import org.bouncycastle.openssl.jcajce.JcaPEMWriter;
 import org.fidoalliance.fdo.protocol.Config;
 import org.fidoalliance.fdo.protocol.HttpClientSupplier;
 import org.fidoalliance.fdo.protocol.InternalServerErrorException;
@@ -341,8 +343,18 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
     X509Certificate cert = (X509Certificate) CertificateFactory.getInstance("X.509")
                                   .generateCertificate(new ByteArrayInputStream(bytes));
 
-    String b64EncodedTpmEc = Base64.getEncoder().encodeToString(cert.getEncoded());
-    varMap.put("tpmEc", b64EncodedTpmEc);
+    // String b64EncodedTpmEc = Base64.getEncoder().encodeToString(cert.getEncoded());
+    final StringWriter writer = new StringWriter();
+    final JcaPEMWriter pemWriter = new JcaPEMWriter(writer);
+    pemWriter.writeObject(cert);
+    pemWriter.flush();
+    pemWriter.close();
+    String tpmEc = writer.toString();
+
+    logger.error("DEBUG=============== tpmEc " + tpmEc);
+    String b64TpmEc = Base64.getEncoder().encodeToString(tpmEc.getBytes());
+    varMap.put("tpmEc", b64TpmEc);
+    logger.error("DEBUG=============== b64encoded " + b64TpmEc);
 
     String[] svcUrlArgs = instruction.getSvcUrlArgs();
 
@@ -376,18 +388,16 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
             .get()) {
 
       String url = svcUrlArgs[1];
-      String httpMethodStr = svcUrlArgs[2];
       String urlParamsStr = svcUrlArgs[4];
       String responseStr = svcUrlArgs[6]; // comma separated values
-
       String[] responses = {};
-      if (responseStr != null) {
+      if (responseStr != null && !responseStr.isEmpty()) {
         responses = responseStr.split(",");
       }
-
       URIBuilder builder = getBaseBuilder(url);
-
-      if (urlParamsStr != null) {
+      logger.error("DEBUG=============== urlParam");
+      if (urlParamsStr != null && !urlParamsStr.isEmpty()) {
+        logger.error("DEBUG=============== urlParam : " + urlParamsStr);
         Map<String, Object> map = new ObjectMapper().readValue(urlParamsStr,
                                new TypeReference<>(){});
         for (Map.Entry<String, Object> e : map.entrySet()) {
@@ -396,10 +406,9 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
           builder.setParameter(e.getKey(), paramVal == null ? inVal : paramVal);
         }
       }
-
       String bodyStr = svcUrlArgs[5];
-
       HttpUriRequest httpRequest = null;
+      String httpMethodStr = svcUrlArgs[2];
       int httpMethod = Integer.parseInt(httpMethodStr);
       switch (httpMethod) {
         case FdoSys.SVC_CALL_HTTP_METHOD_GET:
@@ -407,8 +416,29 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
           logger.info("HTTP GET method requested for REST endpoint : " + httpRequest.toString());
           break;
         case FdoSys.SVC_CALL_HTTP_METHOD_POST:
+          logger.error("DEBUG=============== bodyStr");
+          logger.error("DEBUG=============== bodySt : " +  bodyStr);
+          StringBuilder sb = new StringBuilder("{");
+          if (bodyStr != null) {
+            Map<String, Object> map = new ObjectMapper().readValue(bodyStr,
+                    new TypeReference<>(){});
+            int size = map.size();
+            int counter = 0;
+            for (Map.Entry<String, Object> e : map.entrySet()) {
+              String inVal = (String)e.getValue();
+              String headerVal = (String)varMap.get(inVal);
+              sb.append("\"" + e.getKey() + "\" : ");
+              String val = headerVal == null ? inVal : headerVal;
+              sb.append("\"" + val + "\"");
+              counter += 1;
+              sb.append(counter < size ? ", " : "}");
+            }
+          }
+
           HttpPost httpPost = new HttpPost(builder.build());
-          httpPost.setEntity(new StringEntity(bodyStr, ContentType.APPLICATION_JSON));
+          logger.error("DEBUG=============== bodyStr : " +  sb.toString());
+          httpPost.setEntity(new StringEntity(sb.toString(), ContentType.APPLICATION_JSON));
+
           httpRequest = httpPost;
           logger.info("HTTP POST method requested for REST endpoint : " + url);
           break;
@@ -425,20 +455,24 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
       }
 
       String headersStr = svcUrlArgs[3];
-      if (headersStr != null) {
+      logger.error("DEBUG=============== header");
+      if (headersStr != null && !headersStr.isEmpty()) {
+        logger.error("DEBUG=============== header : " + headersStr);
         Map<String, Object> map = new ObjectMapper().readValue(headersStr, 
                         new TypeReference<>(){});
         for (Map.Entry<String, Object> e : map.entrySet()) {
           String inVal = (String)e.getValue();
           String headerVal = (String)varMap.get(inVal);
+          logger.error("DEBUG=============== header : " + e.getKey() + " Value : " + headerVal);
           httpRequest.addHeader(e.getKey(), headerVal == null ? inVal : headerVal);
         }
       }
 
-
       try (CloseableHttpResponse httpResponse = httpClient.execute(httpRequest);) {
         logger.info(httpResponse.getStatusLine().toString());
-        if (httpResponse.getStatusLine().getStatusCode() != 200) {
+
+        int responseCode = svcUrlArgs.length == 8 ? Integer.parseInt(svcUrlArgs[7]) : 200;
+        if (httpResponse.getStatusLine().getStatusCode() != responseCode) {
           throw new InternalServerErrorException(httpResponse.getStatusLine().toString());
         }
         HttpEntity entity = httpResponse.getEntity();
@@ -448,7 +482,7 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
           try (InputStream input = entity.getContent()) {
             logger.info("reading data");
             for (; ; ) {
-              byte[] data = new byte[state.getMtu() - 26];
+              byte[] data = new byte[4096];
               int br = input.read(data);
               if (br == -1) {
                 break;
@@ -458,15 +492,18 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
                 byte[] temp = data;
                 data = new byte[br];
                 System.arraycopy(temp, 0, data, 0, br);
-                String serialized = new String(temp, StandardCharsets.UTF_8);
-                logger.info(serialized);
+                String serialized = (new String(temp, StandardCharsets.UTF_8)).trim();
+                logger.error("DEBUG=============== Serialized length " + serialized.length());
+                logger.error("DEBUG=============== " + serialized);
 
                 // Content-type : application/jwt
                 if (ContentType.getOrDefault(entity).getMimeType().equals("application/jwt")) {
+                  logger.error("DEBUG================ jwt");
                   varMap.put(responses[0], "Bearer " + serialized);
                 } else {
                   // Not taking care of nested object for now. Expects a plain JSON Object.
                   // Else handling on application/json
+                  logger.error("DEBUG================ nonjwt");
                   Map<String, Object> map = new ObjectMapper().readValue(serialized,
                            new TypeReference<>() {}
                        );
@@ -484,7 +521,7 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
         }
       }
     } catch (Exception e) {
-      logger.error("Failed to make http(s) REST call : " + e.getMessage());
+      logger.error("Failed to make http(s) REST call : " + e);
       throw new InternalServerErrorException(e);
     }
     logger.info("HTTP(S) REST call completed successfully!");
