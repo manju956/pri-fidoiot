@@ -21,6 +21,7 @@ import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.sql.Blob;
 import java.sql.SQLException;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -426,10 +427,14 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
             int counter = 0;
             for (Map.Entry<String, Object> e : map.entrySet()) {
               String inVal = (String)e.getValue();
-              String headerVal = (String)varMap.get(inVal);
+              String bodyVal = (String)varMap.get(inVal);
               sb.append("\"" + e.getKey() + "\" : ");
-              String val = headerVal == null ? inVal : headerVal;
-              sb.append("\"" + val + "\"");
+              String val = bodyVal == null ? inVal : bodyVal;
+              if (val.startsWith("[") || val.startsWith("{")) {
+                sb.append(val);
+              } else {
+                sb.append("\"" + val + "\"");
+              }
               counter += 1;
               sb.append(counter < size ? ", " : "}");
             }
@@ -478,43 +483,25 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
         HttpEntity entity = httpResponse.getEntity();
         if (entity != null) {
           logger.info("content length is " + entity.getContentLength());
+          String responseString = EntityUtils.toString(entity, "UTF-8");
+          logger.error("BYTE DEBUG============ " + responseString.length() + " " + responseString);
 
-          try (InputStream input = entity.getContent()) {
-            logger.info("reading data");
-            for (; ; ) {
-              byte[] data = new byte[4096];
-              int br = input.read(data);
-              if (br == -1) {
-                break;
-              }
+          // Content-type : application/jwt
+          if (ContentType.getOrDefault(entity).getMimeType().equals("application/jwt")) {
+            logger.error("DEBUG================ jwt");
+            varMap.put(responses[0], "Bearer " + responseString);
+          } else {
+            // Not taking care of nested object for now. Expects a plain JSON Object.
+            // Else handling on application/json
+            logger.error("DEBUG================ nonjwt");
+            Map<String, Object> map = new ObjectMapper().readValue(responseString,
+                    new TypeReference<>() {}
+                );
 
-              if (br < data.length) {
-                byte[] temp = data;
-                data = new byte[br];
-                System.arraycopy(temp, 0, data, 0, br);
-                String serialized = (new String(temp, StandardCharsets.UTF_8)).trim();
-                logger.error("DEBUG=============== Serialized length " + serialized.length());
-                logger.error("DEBUG=============== " + serialized);
-
-                // Content-type : application/jwt
-                if (ContentType.getOrDefault(entity).getMimeType().equals("application/jwt")) {
-                  logger.error("DEBUG================ jwt");
-                  varMap.put(responses[0], "Bearer " + serialized);
-                } else {
-                  // Not taking care of nested object for now. Expects a plain JSON Object.
-                  // Else handling on application/json
-                  logger.error("DEBUG================ nonjwt");
-                  Map<String, Object> map = new ObjectMapper().readValue(serialized,
-                           new TypeReference<>() {}
-                       );
-
-                  for (String k : responses) {
-                    String val = (String) map.get(k);
-                    if (val != null) {
-                      varMap.put(k, val);
-                    }
-                  }
-                }
+            for (String k : responses) {
+              String val = (String) map.get(k);
+              if (val != null) {
+                varMap.put(k, val);
               }
             }
           }
