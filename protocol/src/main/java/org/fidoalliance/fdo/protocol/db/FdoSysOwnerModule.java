@@ -81,12 +81,15 @@ import org.hibernate.Transaction;
  */
 public class FdoSysOwnerModule implements ServiceInfoModule {
 
+  static final String SVC_URL_CACHE_KEY = "svcUrlCacheKey";
 
   public FdoSysOwnerModule() {
     varMap = new HashMap<>();
+    svcUrlMap = new HashMap<>();
   }
 
   private Map<String, Object> varMap;
+  private Map<String, String[]> svcUrlMap;
 
   private LoggerService logger = new LoggerService(FdoSysOwnerModule.class);
 
@@ -106,6 +109,7 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
     FdoSysModuleExtra extra = state.getExtra().covertValue(FdoSysModuleExtra.class);
     switch (kvPair.getKey()) {
       case DevMod.KEY_MODULES: {
+        logger.error("DEBUG=============== In Key mod");
         DevModList list =
             Mapper.INSTANCE.readValue(kvPair.getValue(), DevModList.class);
         for (String name : list.getModulesNames()) {
@@ -125,10 +129,12 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
       case DevMod.KEY_OS:
       case DevMod.KEY_VERSION:
       case DevMod.KEY_ARCH:
+        logger.error("DEBUG=============== In Dev");
         extra.getFilter().put(kvPair.getKey(),
             Mapper.INSTANCE.readValue(kvPair.getValue(), String.class));
         break;
       case FdoSys.STATUS_CB:
+        logger.error("DEBUG=============== In Cb");
         if (state.isActive()) {
           StatusCbExtended statusCbExt = Mapper.INSTANCE.readValue(
                   kvPair.getValue(), StatusCbExtended.class);
@@ -158,6 +164,7 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
         }
         break;
       case FdoSys.DATA: {
+        logger.error("DEBUG=============== In Data");
         if (state.isActive()) {
           FetchMessage msg = Mapper.INSTANCE.readValue(kvPair.getValue(), FetchMessage.class);
           byte[] data = msg.getDataBytes();
@@ -167,6 +174,7 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
       }
       break;
       case FdoSys.EOT:
+        logger.error("DEBUG=============== In EOT ");
         if (state.isActive()) {
           extra.setWaiting(false);
           extra.setQueue(extra.getWaitQueue());
@@ -175,7 +183,25 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
           onEot(state, extra, result);
         }
         break;
+      case FdoSys.SVC_URL:
+        logger.error("DEBUG=============== In SVC ");
+        if (state.isActive()) {
+          extra.setWaiting(false);
+          extra.setQueue(extra.getWaitQueue());
+          extra.setWaitQueue(new ServiceInfoQueue());
+
+          String svcUrlKey = Mapper.INSTANCE.readValue(kvPair.getValue(), String.class);
+          svcUrlKey = svcUrlKey.trim();
+          logger.error("DEBUG=============== Response " + svcUrlKey);
+          logger.error("DEBUG=============== Key " + svcUrlKey + " Size " + svcUrlKey.length());
+          String[] svcUrlArgs = svcUrlMap.get(svcUrlKey);
+          logger.error("DEBUG=============== Map size " + svcUrlMap.size());
+          logger.error("DEBUG=============== From map " + svcUrlArgs);
+          makeSvcCall(state, extra, svcUrlArgs);
+        }
+        break;
       default:
+        logger.error("DEBUG=============== In Default ");
         break;
     }
     state.setExtra(AnyType.fromObject(extra));
@@ -194,6 +220,7 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
     while (extra.getQueue().size() > 0) {
       boolean sent = sendFunction.apply(extra.getQueue().peek());
       if (sent) {
+        logger.error("DEBUG=============== IN send ");
         checkWaiting(extra, extra.getQueue().poll());
       } else {
         break;
@@ -315,7 +342,7 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
           } else if (instruction.getFetchArgs() != null) {
             getFetch(state, extra, instruction);
           } else if (instruction.getSvcUrlArgs() != null) {
-            makeSvcCall(state, extra, instruction);
+            sendSvcCall(state, extra, instruction);
           }
         }
       }
@@ -327,38 +354,53 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
     }
   }
 
-  protected void makeSvcCall(ServiceInfoModuleState state,
+  protected void sendSvcCall(ServiceInfoModuleState state,
                             FdoSysModuleExtra extra,
                             FdoSysInstruction instruction)
                       throws IOException, CertificateException {
 
-    String deviceGuid = state.getGuid().toString();
-    OwnershipVoucher voucher = Config.getWorker(VoucherQueryFunction.class).apply(deviceGuid);
-    OwnershipVoucherEntries entries = voucher.getEntries();
-    CoseSign1 entry = entries.getLast();
+    if (varMap.get("tpmEc") == null) {
+      String deviceGuid = state.getGuid().toString();
+      OwnershipVoucher voucher = Config.getWorker(VoucherQueryFunction.class).apply(deviceGuid);
+      OwnershipVoucherEntries entries = voucher.getEntries();
+      CoseSign1 entry = entries.getLast();
 
-    OwnershipVoucherEntryPayload entryPayload =
-            Mapper.INSTANCE.readValue(entry.getPayload(), OwnershipVoucherEntryPayload.class);
-    byte[] bytes = entryPayload.getExtra();
-    String hello = new String(bytes, StandardCharsets.UTF_8);
-    X509Certificate cert = (X509Certificate) CertificateFactory.getInstance("X.509")
-                                  .generateCertificate(new ByteArrayInputStream(bytes));
+      OwnershipVoucherEntryPayload entryPayload =
+              Mapper.INSTANCE.readValue(entry.getPayload(), OwnershipVoucherEntryPayload.class);
+      byte[] bytes = entryPayload.getExtra();
+      String hello = new String(bytes, StandardCharsets.UTF_8);
+      X509Certificate cert = (X509Certificate) CertificateFactory.getInstance("X.509")
+              .generateCertificate(new ByteArrayInputStream(bytes));
 
-    // String b64EncodedTpmEc = Base64.getEncoder().encodeToString(cert.getEncoded());
-    final StringWriter writer = new StringWriter();
-    final JcaPEMWriter pemWriter = new JcaPEMWriter(writer);
-    pemWriter.writeObject(cert);
-    pemWriter.flush();
-    pemWriter.close();
-    String tpmEc = writer.toString();
+      // String b64EncodedTpmEc = Base64.getEncoder().encodeToString(cert.getEncoded());
+      final StringWriter writer = new StringWriter();
+      final JcaPEMWriter pemWriter = new JcaPEMWriter(writer);
+      pemWriter.writeObject(cert);
+      pemWriter.flush();
+      pemWriter.close();
+      String tpmEc = writer.toString();
 
-    logger.error("DEBUG=============== tpmEc " + tpmEc);
-    String b64TpmEc = Base64.getEncoder().encodeToString(tpmEc.getBytes());
-    varMap.put("tpmEc", b64TpmEc);
-    logger.error("DEBUG=============== b64encoded " + b64TpmEc);
+      logger.error("DEBUG=============== tpmEc " + tpmEc);
+      String b64TpmEc = Base64.getEncoder().encodeToString(tpmEc.getBytes());
+      varMap.put("tpmEc", b64TpmEc);
+      logger.error("DEBUG=============== b64encoded " + b64TpmEc);
+    }
 
-    String[] svcUrlArgs = instruction.getSvcUrlArgs();
+    ServiceInfoKeyValuePair kv = new ServiceInfoKeyValuePair();
+    kv.setKeyName(FdoSys.SVC_URL);
+    Integer size = svcUrlMap.size();
+    String key =  SVC_URL_CACHE_KEY + size;
+    logger.error("DEBUG====================== Key " + key + " Size " + key.length());
+    logger.error("DEBUG====================== svcUrlArgs" + instruction.getSvcUrlArgs());
+    svcUrlMap.put(key, instruction.getSvcUrlArgs());
+    kv.setValue(Mapper.INSTANCE.writeValue(key));
+    extra.getQueue().add(kv);
+    return;
+  }
 
+  private void makeSvcCall(ServiceInfoModuleState state,
+                           FdoSysModuleExtra extra,
+                           String[] svcUrlArgs) throws IOException {
     // Obtain the protocol from arg 0
     String protocolStr = svcUrlArgs[0];
     int protocol = Integer.parseInt(protocolStr);
