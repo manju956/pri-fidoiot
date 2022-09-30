@@ -272,7 +272,7 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
     }
 
     if (!varMap.containsKey(mapKey)) {
-      varMap.put(mapKey, status.getExecResult().getBytes(StandardCharsets.UTF_8));
+      varMap.put(mapKey, status.getExecResult());
     }
   }
 
@@ -284,7 +284,7 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
       logger.warn(varMap.get(sviMapKey));
     }
     // store the result of fetch in map
-    varMap.put(sviMapKey, data);
+    varMap.put(sviMapKey, new String(data, StandardCharsets.UTF_8));
 
     // Persist the data fetched from device to file
     try {
