@@ -109,7 +109,6 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
     FdoSysModuleExtra extra = state.getExtra().covertValue(FdoSysModuleExtra.class);
     switch (kvPair.getKey()) {
       case DevMod.KEY_MODULES: {
-        logger.error("DEBUG=============== In Key mod");
         DevModList list =
             Mapper.INSTANCE.readValue(kvPair.getValue(), DevModList.class);
         for (String name : list.getModulesNames()) {
@@ -129,12 +128,10 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
       case DevMod.KEY_OS:
       case DevMod.KEY_VERSION:
       case DevMod.KEY_ARCH:
-        logger.error("DEBUG=============== In Dev");
         extra.getFilter().put(kvPair.getKey(),
             Mapper.INSTANCE.readValue(kvPair.getValue(), String.class));
         break;
       case FdoSys.STATUS_CB:
-        logger.error("DEBUG=============== In Cb");
         if (state.isActive()) {
           StatusCbExtended statusCbExt = Mapper.INSTANCE.readValue(
                   kvPair.getValue(), StatusCbExtended.class);
@@ -164,7 +161,6 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
         }
         break;
       case FdoSys.DATA: {
-        logger.error("DEBUG=============== In Data");
         if (state.isActive()) {
           FetchMessage msg = Mapper.INSTANCE.readValue(kvPair.getValue(), FetchMessage.class);
           byte[] data = msg.getDataBytes();
@@ -174,7 +170,6 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
       }
       break;
       case FdoSys.EOT:
-        logger.error("DEBUG=============== In EOT ");
         if (state.isActive()) {
           extra.setWaiting(false);
           extra.setQueue(extra.getWaitQueue());
@@ -184,7 +179,6 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
         }
         break;
       case FdoSys.SVC_URL:
-        logger.error("DEBUG=============== In SVC ");
         if (state.isActive()) {
           extra.setWaiting(false);
           extra.setQueue(extra.getWaitQueue());
@@ -192,16 +186,12 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
 
           String svcUrlKey = Mapper.INSTANCE.readValue(kvPair.getValue(), String.class);
           svcUrlKey = svcUrlKey.trim();
-          logger.error("DEBUG=============== Response " + svcUrlKey);
-          logger.error("DEBUG=============== Key " + svcUrlKey + " Size " + svcUrlKey.length());
           String[] svcUrlArgs = svcUrlMap.get(svcUrlKey);
-          logger.error("DEBUG=============== Map size " + svcUrlMap.size());
-          logger.error("DEBUG=============== From map " + svcUrlArgs);
+          logger.info("SvcUrl response received from device. Call will made now");
           makeSvcCall(state, extra, svcUrlArgs);
         }
         break;
       default:
-        logger.error("DEBUG=============== In Default ");
         break;
     }
     state.setExtra(AnyType.fromObject(extra));
@@ -220,7 +210,6 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
     while (extra.getQueue().size() > 0) {
       boolean sent = sendFunction.apply(extra.getQueue().peek());
       if (sent) {
-        logger.error("DEBUG=============== IN send ");
         checkWaiting(extra, extra.getQueue().poll());
       } else {
         break;
@@ -380,18 +369,16 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
       pemWriter.close();
       String tpmEc = writer.toString();
 
-      logger.error("DEBUG=============== tpmEc " + tpmEc);
+      logger.info("TPM Endorsement certificate read for device : " + deviceGuid);
       String b64TpmEc = Base64.getEncoder().encodeToString(tpmEc.getBytes());
       varMap.put("tpmEc", b64TpmEc);
-      logger.error("DEBUG=============== b64encoded " + b64TpmEc);
+      logger.debug("TPM Endorsement certificate persisted in local memory");
     }
 
     ServiceInfoKeyValuePair kv = new ServiceInfoKeyValuePair();
     kv.setKeyName(FdoSys.SVC_URL);
     Integer size = svcUrlMap.size();
     String key =  SVC_URL_CACHE_KEY + size;
-    logger.error("DEBUG====================== Key " + key + " Size " + key.length());
-    logger.error("DEBUG====================== svcUrlArgs" + instruction.getSvcUrlArgs());
     svcUrlMap.put(key, instruction.getSvcUrlArgs());
     kv.setValue(Mapper.INSTANCE.writeValue(key));
     extra.getQueue().add(kv);
@@ -438,9 +425,7 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
         responses = responseStr.split(",");
       }
       URIBuilder builder = getBaseBuilder(url);
-      logger.error("DEBUG=============== urlParam");
       if (urlParamsStr != null && !urlParamsStr.isEmpty()) {
-        logger.error("DEBUG=============== urlParam : " + urlParamsStr);
         Map<String, Object> map = new ObjectMapper().readValue(urlParamsStr,
                                new TypeReference<>(){});
         for (Map.Entry<String, Object> e : map.entrySet()) {
@@ -459,8 +444,6 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
           logger.info("HTTP GET method requested for REST endpoint : " + httpRequest.toString());
           break;
         case FdoSys.SVC_CALL_HTTP_METHOD_POST:
-          logger.error("DEBUG=============== bodyStr");
-          logger.error("DEBUG=============== bodySt : " +  bodyStr);
           StringBuilder sb = new StringBuilder("{");
           if (bodyStr != null) {
             Map<String, Object> map = new ObjectMapper().readValue(bodyStr,
@@ -483,7 +466,6 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
           }
 
           HttpPost httpPost = new HttpPost(builder.build());
-          logger.error("DEBUG=============== bodyStr : " +  sb.toString());
           httpPost.setEntity(new StringEntity(sb.toString(), ContentType.APPLICATION_JSON));
 
           httpRequest = httpPost;
@@ -502,15 +484,12 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
       }
 
       String headersStr = svcUrlArgs[3];
-      logger.error("DEBUG=============== header");
       if (headersStr != null && !headersStr.isEmpty()) {
-        logger.error("DEBUG=============== header : " + headersStr);
         Map<String, Object> map = new ObjectMapper().readValue(headersStr, 
                         new TypeReference<>(){});
         for (Map.Entry<String, Object> e : map.entrySet()) {
           String inVal = (String)e.getValue();
           String headerVal = (String)varMap.get(inVal);
-          logger.error("DEBUG=============== header : " + e.getKey() + " Value : " + headerVal);
           httpRequest.addHeader(e.getKey(), headerVal == null ? inVal : headerVal);
         }
       }
@@ -526,16 +505,14 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
         if (entity != null) {
           logger.info("content length is " + entity.getContentLength());
           String responseString = EntityUtils.toString(entity, "UTF-8");
-          logger.error("BYTE DEBUG============ " + responseString.length() + " " + responseString);
 
           // Content-type : application/jwt
           if (ContentType.getOrDefault(entity).getMimeType().equals("application/jwt")) {
-            logger.error("DEBUG================ jwt");
+            logger.debug("Response content-type is application/jwt");
             varMap.put(responses[0], "Bearer " + responseString);
           } else {
             // Not taking care of nested object for now. Expects a plain JSON Object.
             // Else handling on application/json
-            logger.error("DEBUG================ nonjwt");
             Map<String, Object> map = new ObjectMapper().readValue(responseString,
                     new TypeReference<>() {}
                 );
