@@ -23,8 +23,11 @@ import java.util.List;
 
 import org.bouncycastle.openssl.PEMParser;
 import org.bouncycastle.util.io.pem.PemObject;
+import org.fidoalliance.fdo.protocol.VoucherUtils;
+
 import org.fidoalliance.fdo.protocol.db.StandardExtraInfoSupplier;
 import org.fidoalliance.fdo.protocol.dispatch.CryptoService;
+import org.fidoalliance.fdo.protocol.dispatch.ExtraInfoSupplier;
 import org.fidoalliance.fdo.protocol.message.CoseSign1;
 import org.fidoalliance.fdo.protocol.message.Guid;
 import org.fidoalliance.fdo.protocol.message.Hash;
@@ -56,8 +59,8 @@ public class VoucherUtils {
    */
 
   public static OwnershipVoucher extend(OwnershipVoucher voucher,
-                                        KeyResolver keyResolver, Certificate[] nextChain,
-                                        byte[] clientTpmEk) throws IOException {
+                                        KeyResolver keyResolver, Certificate[] nextChain)
+                                        throws IOException {
 
     Hash mac = voucher.getHmac();
     HashType hashType = new AlgorithmFinder().getCompatibleHashType(mac.getHashType());
@@ -88,7 +91,7 @@ public class VoucherUtils {
     OwnershipVoucherEntryPayload entryPayload = new OwnershipVoucherEntryPayload();
     entryPayload.setPreviousHash(prevHash);
     entryPayload.setHeaderHash(hdrHash);
-    entryPayload.setExtra(clientTpmEk);
+    entryPayload.setExtra(Config.getWorker(ExtraInfoSupplier.class).get());
 
     OwnerPublicKey nextOwnerKey = cs.encodeKey(prevOwnerPubKey.getType(),
         prevOwnerPubKey.getEnc(),

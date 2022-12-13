@@ -336,7 +336,7 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
         }
       }
       trans.commit();
-    } catch (SQLException | CertificateException e) {
+    } catch (SQLException e) {
       throw new InternalServerErrorException(e);
     } finally {
       session.close();
@@ -346,34 +346,7 @@ public class FdoSysOwnerModule implements ServiceInfoModule {
   protected void sendSvcCall(ServiceInfoModuleState state,
                             FdoSysModuleExtra extra,
                             FdoSysInstruction instruction)
-                      throws IOException, CertificateException {
-
-    if (varMap.get("tpmEc") == null) {
-      String deviceGuid = state.getGuid().toString();
-      OwnershipVoucher voucher = Config.getWorker(VoucherQueryFunction.class).apply(deviceGuid);
-      OwnershipVoucherEntries entries = voucher.getEntries();
-      CoseSign1 entry = entries.getLast();
-
-      OwnershipVoucherEntryPayload entryPayload =
-              Mapper.INSTANCE.readValue(entry.getPayload(), OwnershipVoucherEntryPayload.class);
-      byte[] bytes = entryPayload.getExtra();
-      String hello = new String(bytes, StandardCharsets.UTF_8);
-      X509Certificate cert = (X509Certificate) CertificateFactory.getInstance("X.509")
-              .generateCertificate(new ByteArrayInputStream(bytes));
-
-      // String b64EncodedTpmEc = Base64.getEncoder().encodeToString(cert.getEncoded());
-      final StringWriter writer = new StringWriter();
-      final JcaPEMWriter pemWriter = new JcaPEMWriter(writer);
-      pemWriter.writeObject(cert);
-      pemWriter.flush();
-      pemWriter.close();
-      String tpmEc = writer.toString();
-
-      logger.info("TPM Endorsement certificate read for device : " + deviceGuid);
-      String b64TpmEc = Base64.getEncoder().encodeToString(tpmEc.getBytes());
-      varMap.put("tpmEc", b64TpmEc);
-      logger.debug("TPM Endorsement certificate persisted in local memory");
-    }
+                      throws IOException {
 
     ServiceInfoKeyValuePair kv = new ServiceInfoKeyValuePair();
     kv.setKeyName(FdoSys.SVC_URL);

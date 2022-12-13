@@ -73,8 +73,7 @@ public class AutoInjectVoucherStorageFunction extends StandardVoucherStorageFunc
       final Certificate[] newOwnerChain = ownerResolver.getCertificateChain(alias);
       VoucherUtils.extend(ownershipVoucher,
           Config.getWorker(ManufacturerKeySupplier.class).get(),
-          newOwnerChain,
-              null
+          newOwnerChain
       );
 
       OnboardingVoucher onboardingVoucher = new OnboardingVoucher();
